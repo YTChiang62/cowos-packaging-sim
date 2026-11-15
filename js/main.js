@@ -1,0 +1,252 @@
+import { LANGS, t, applyStaticI18n } from "./i18n.js";
+import { Session, STEPS } from "./mes.js";
+import { Plant } from "./plant.js";
+import {
+  bindUI, renderAll, showTool, hideTool, showToast, showRadio, showDone,
+} from "./ui.js";
+
+const canvas = document.getElementById("view");
+const els = bindUI();
+
+const state = {
+  lang: "zh-TW",
+  intensity: "few",
+  startRole: "MFG",
+  session: null,
+  selectedTool: null,
+};
+
+const plant = new Plant(canvas);
+plant.setTranslator((k) => t(state.lang, k), state.lang);
+plant.focusOverview();
+
+applyStaticI18n(state.lang);
+els.btnLang.textContent = "繁";
+
+function attachSession(session) {
+  state.session = session;
+  session.on("change", () => {
+    renderAll(state.lang, session, els);
+    syncPlantStatus();
+  });
+  session.on("transport", ({ to, carrier }) => {
+    const type = carrier || session.displayCarrier();
+    plant.moveTo(to.tool, type).then(() => session.transportDone());
+  });
+  session.on("toast", ({ key, vars }) => showToast(state.lang, key, vars));
+  session.on("radio", (key) => showRadio(state.lang, key));
+  session.on("hold", () => {
+    plant.setFollow(false);
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    renderAll(state.lang, session, els);
+    syncPlantStatus();
+  });
+  session.on("complete", () => showDone(state.lang, session, els));
+  session.on("resolved", () => {
+    els.holdLayer.hidden = true;
+  });
+  renderAll(state.lang, session, els);
+  plant.placeAt(session.step().tool, session.displayCarrier());
+  syncPlantStatus();
+}
+
+function syncPlantStatus() {
+  const s = state.session;
+  if (!s) return;
+  plant.clearStatuses();
+  const tool = s.step().tool;
+  plant.setToolStatus(tool, s.status === "DONE" ? "DONE" : s.status);
+  if (state.selectedTool) showTool(state.lang, s, els, state.selectedTool);
+}
+
+function startLot() {
+  const session = new Session({ intensity: state.intensity, role: state.startRole });
+  document.querySelectorAll("[data-role]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.role === state.startRole));
+  });
+  els.startLayer.hidden = true;
+  els.doneLayer.hidden = true;
+  els.holdLayer.hidden = true;
+  document.getElementById("radio-dock").classList.remove("is-on");
+  attachSession(session);
+  plant.placeAt("INB-01", "FOUP");
+  plant.focusOverview();
+}
+
+document.getElementById("btn-start").addEventListener("click", startLot);
+document.getElementById("btn-restart").addEventListener("click", () => {
+  els.doneLayer.hidden = true;
+  els.startLayer.hidden = false;
+  state.session = null;
+  plant.clearStatuses();
+  plant.placeAt("INB-01", "FOUP");
+  plant.focusOverview();
+  renderAll(state.lang, null, els);
+});
+
+document.getElementById("intensity-row").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-intensity]");
+  if (!b) return;
+  state.intensity = b.dataset.intensity;
+  document.querySelectorAll("[data-intensity]").forEach((x) => {
+    x.setAttribute("aria-pressed", String(x === b));
+  });
+});
+
+document.getElementById("start-role-row").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-start-role]");
+  if (!b) return;
+  state.startRole = b.dataset.startRole;
+  document.querySelectorAll("[data-start-role]").forEach((x) => {
+    x.setAttribute("aria-pressed", String(x === b));
+  });
+});
+
+els.btnAdvance.addEventListener("click", () => state.session?.advance());
+els.btnPrev.addEventListener("click", () => state.session?.prevBeat());
+els.btnAuto.addEventListener("click", () => {
+  if (!state.session) return;
+  state.session.setAuto(!state.session.auto);
+});
+
+document.querySelector(".lot-dock").addEventListener("click", (e) => {
+  const mode = e.target.closest("[data-mode]");
+  if (mode && state.session) {
+    state.session.setMode(mode.dataset.mode);
+    document.querySelectorAll("[data-mode]").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b === mode));
+    });
+  }
+  const spd = e.target.closest("[data-speed]");
+  if (spd && state.session) {
+    state.session.setSpeed(Number(spd.dataset.speed));
+    document.querySelectorAll("[data-speed]").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b === spd));
+    });
+  }
+});
+
+document.querySelector(".topbar").addEventListener("click", (e) => {
+  const role = e.target.closest("[data-role]");
+  if (role) {
+    state.startRole = role.dataset.role;
+    state.session?.setRole(role.dataset.role);
+    document.querySelectorAll("header [data-role]").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b === role));
+    });
+  }
+});
+
+els.btnLang.addEventListener("click", () => {
+  const i = LANGS.indexOf(state.lang);
+  state.lang = LANGS[(i + 1) % LANGS.length];
+  applyStaticI18n(state.lang);
+  plant.setTranslator((k) => t(state.lang, k), state.lang);
+  renderAll(state.lang, state.session, els);
+  if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
+});
+
+document.getElementById("hold-actions").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-action]");
+  if (!b || !state.session) return;
+  state.session.resolve(b.dataset.action);
+});
+
+document.getElementById("tool-close").addEventListener("click", () => {
+  state.selectedTool = null;
+  hideTool(els);
+});
+document.getElementById("btn-jump-tool").addEventListener("click", () => {
+  if (state.selectedTool) {
+    plant.setFollow(false);
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    plant.focusTool(state.selectedTool);
+  }
+});
+
+document.getElementById("btn-cam-overview").addEventListener("click", () => {
+  plant.setFollow(false);
+  document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+  plant.focusOverview();
+});
+document.getElementById("btn-cam-follow").addEventListener("click", (e) => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  e.currentTarget.setAttribute("aria-pressed", String(on));
+  plant.setFollow(on);
+});
+document.getElementById("btn-cam-tool").addEventListener("click", () => {
+  if (!state.session) return;
+  plant.setFollow(false);
+  document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+  plant.focusTool(state.session.step().tool);
+});
+
+document.getElementById("stage-rail").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-stage]");
+  if (!chip) return;
+  const step = STEPS.find((s) => s.stage === chip.dataset.stage);
+  if (step) {
+    plant.setFollow(false);
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    plant.focusTool(step.tool);
+  }
+});
+
+// Click vs drag on the canvas
+let down = null;
+canvas.addEventListener("pointerdown", (e) => {
+  down = { x: e.clientX, y: e.clientY };
+});
+canvas.addEventListener("pointerup", (e) => {
+  if (!down) return;
+  const dx = e.clientX - down.x;
+  const dy = e.clientY - down.y;
+  down = null;
+  if (dx * dx + dy * dy > 16) return;
+  const id = plant.pick(e.clientX, e.clientY);
+  if (id) {
+    state.selectedTool = id;
+    showTool(state.lang, state.session, els, id);
+  }
+});
+canvas.addEventListener("pointermove", (e) => plant.hover(e.clientX, e.clientY));
+
+window.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, textarea")) return;
+  if (els.startLayer.hidden === false) {
+    if (e.code === "Enter" || e.code === "Space") {
+      e.preventDefault();
+      startLot();
+    }
+    return;
+  }
+  if (e.code === "Space") {
+    e.preventDefault();
+    state.session?.advance();
+  } else if (e.key === "f" || e.key === "F") {
+    const btn = document.getElementById("btn-cam-follow");
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.setAttribute("aria-pressed", String(on));
+    plant.setFollow(on);
+  } else if (e.key === "1") {
+    plant.setFollow(false);
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    plant.focusOverview();
+  } else if (e.key === "2") {
+    if (state.session) plant.focusTool(state.session.step().tool);
+  }
+});
+
+window.addEventListener("resize", () => plant.resize());
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  state.session?.tick(dt);
+  // Scale transport with speed
+  const spd = state.session ? state.session.speed : 1;
+  plant.update(dt * (plant.transport ? spd : 1));
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
