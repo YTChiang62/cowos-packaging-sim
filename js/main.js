@@ -30,23 +30,38 @@ function attachSession(session) {
     syncPlantStatus();
   });
   session.on("transport", ({ to, carrier }) => {
-    const type = carrier || session.displayCarrier();
-    plant.moveTo(to.tool, type).then(() => session.transportDone());
+    plant.moveTo(to.tool, carrier || session.travelCarrier()).then(() => session.transportDone());
   });
+  session.on("process", ({ step, fault }) => {
+    plant.beginLive(step.id, fault);
+  });
+  session.on("progress", (p) => plant.setLiveT(p));
   session.on("toast", ({ key, vars }) => showToast(state.lang, key, vars));
   session.on("radio", (key) => showRadio(state.lang, key));
   session.on("hold", () => {
+    plant.freeze();
+    plant.focusWork(session.step().tool);
     plant.setFollow(false);
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
     renderAll(state.lang, session, els);
     syncPlantStatus();
   });
-  session.on("complete", () => showDone(state.lang, session, els));
-  session.on("resolved", () => {
+  session.on("complete", () => {
+    plant.settle();
+    showDone(state.lang, session, els);
+  });
+  session.on("resolved", (info) => {
     els.holdLayer.hidden = true;
+    if (info?.rework || info?.bake) {
+      plant.endLive();
+      plant.showLot(session.morph, session.step().tool, session.displayCarrier());
+      plant.focusWork(session.step().tool);
+    } else if (info?.resume) {
+      plant.beginDecay();
+    }
   });
   renderAll(state.lang, session, els);
-  plant.placeAt(session.step().tool, session.displayCarrier());
+  plant.showLot(session.morph, session.step().tool, session.displayCarrier());
   syncPlantStatus();
 }
 
@@ -55,8 +70,57 @@ function syncPlantStatus() {
   if (!s) return;
   plant.clearStatuses();
   const tool = s.step().tool;
-  plant.setToolStatus(tool, s.status === "DONE" ? "DONE" : s.status);
+  const visual = s.status === "HOLD" ? "HOLD" : s.status === "DONE" ? "DONE" : s.busy ? "RUN" : "QUEUE";
+  plant.setToolStatus(tool, visual);
+  if (!plant.blocksSync()) plant.showLot(s.morph, tool, s.displayCarrier());
   if (state.selectedTool) showTool(state.lang, s, els, state.selectedTool);
+}
+
+function replayStation(stationId) {
+  const s = state.session;
+  if (!s) return;
+  const toggleBack = !stationId && (plant.mode === "solo" || plant.mode === "soloHold");
+  if (toggleBack) {
+    plant.cancelSolo();
+    plant.showLot(s.morph, s.step().tool, s.displayCarrier());
+    syncPlantStatus();
+    return;
+  }
+  if (s.busy || s.hold) {
+    showToast(state.lang, "busyNow");
+    const step = stationId ? STEPS.find((x) => x.id === stationId) : s.step();
+    if (step) plant.focusWork(step.tool);
+    return;
+  }
+  if (plant.mode === "solo" || plant.mode === "soloHold") plant.cancelSolo();
+  plant.playSolo(stationId || s.step().id);
+}
+
+function paintMorph() {
+  const s = state.session;
+  if (!s || !els.lotMorph) return;
+  const lang = state.lang;
+  let text;
+  let live = false;
+  if ((plant.mode === "solo" || plant.mode === "soloHold") && plant.solo) {
+    const st = STEPS.find((x) => x.id === plant.solo.stationId);
+    text = t(lang, "morphDemo", { name: t(lang, "morph_" + (st?.morphOut || s.morph)) });
+    live = true;
+  } else if (s.hold) {
+    text = `${t(lang, "morph_" + s.morph)} · HOLD`;
+  } else if (plant.mode === "live" && plant.live && plant.live.t < 0.98) {
+    const st = STEPS.find((x) => x.id === plant.live.stationId);
+    text = `${t(lang, "morph_" + s.morph)} → ${t(lang, "morph_" + st.morphOut)}`;
+    live = true;
+  } else {
+    text = t(lang, "morph_" + s.morph);
+  }
+  els.lotMorph.dataset.live = live ? "1" : "";
+  els.lotMorph.textContent = text;
+  if (els.btnReplay) {
+    const back = plant.mode === "solo" || plant.mode === "soloHold";
+    els.btnReplay.textContent = t(lang, back ? "btnReturn" : "btnReplay");
+  }
 }
 
 function startLot() {
@@ -69,7 +133,6 @@ function startLot() {
   els.holdLayer.hidden = true;
   document.getElementById("radio-dock").classList.remove("is-on");
   attachSession(session);
-  plant.placeAt("INB-01", "FOUP");
   plant.focusOverview();
 }
 
@@ -78,8 +141,10 @@ document.getElementById("btn-restart").addEventListener("click", () => {
   els.doneLayer.hidden = true;
   els.startLayer.hidden = false;
   state.session = null;
+  plant.cancelSolo();
+  plant.endLive();
   plant.clearStatuses();
-  plant.placeAt("INB-01", "FOUP");
+  plant.showLot("bank", "DBK-02", "FOUP");
   plant.focusOverview();
   renderAll(state.lang, null, els);
 });
@@ -102,12 +167,17 @@ document.getElementById("start-role-row").addEventListener("click", (e) => {
   });
 });
 
-els.btnAdvance.addEventListener("click", () => state.session?.advance());
+els.btnAdvance.addEventListener("click", () => {
+  if (plant.mode === "solo" || plant.mode === "soloHold") plant.cancelSolo();
+  state.session?.advance();
+});
 els.btnPrev.addEventListener("click", () => state.session?.prevBeat());
 els.btnAuto.addEventListener("click", () => {
   if (!state.session) return;
+  if (plant.mode === "solo" || plant.mode === "soloHold") plant.cancelSolo();
   state.session.setAuto(!state.session.auto);
 });
+els.btnReplay.addEventListener("click", () => replayStation());
 
 document.querySelector(".lot-dock").addEventListener("click", (e) => {
   const mode = e.target.closest("[data-mode]");
@@ -182,14 +252,11 @@ document.getElementById("btn-cam-tool").addEventListener("click", () => {
 });
 
 document.getElementById("stage-rail").addEventListener("click", (e) => {
-  const chip = e.target.closest("[data-stage]");
+  const chip = e.target.closest("[data-station]");
   if (!chip) return;
-  const step = STEPS.find((s) => s.stage === chip.dataset.stage);
-  if (step) {
-    plant.setFollow(false);
-    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
-    plant.focusTool(step.tool);
-  }
+  plant.setFollow(false);
+  document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+  replayStation(chip.dataset.station);
 });
 
 // Click vs drag on the canvas
@@ -223,6 +290,8 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Space") {
     e.preventDefault();
     state.session?.advance();
+  } else if (e.key === "r" || e.key === "R") {
+    replayStation();
   } else if (e.key === "f" || e.key === "F") {
     const btn = document.getElementById("btn-cam-follow");
     const on = btn.getAttribute("aria-pressed") !== "true";
@@ -244,9 +313,9 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   state.session?.tick(dt);
-  // Scale transport with speed
   const spd = state.session ? state.session.speed : 1;
-  plant.update(dt * (plant.transport ? spd : 1));
+  plant.update(dt, spd);
+  paintMorph();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

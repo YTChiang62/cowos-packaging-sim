@@ -70,6 +70,10 @@
         <dd class="mono" id="lot-recipe">—</dd>
       </div>
       <div class="meta span2">
+        <dt data-i18n="metaMorph">產品形態</dt>
+        <dd id="lot-morph">—</dd>
+      </div>
+      <div class="meta span2">
         <dt data-i18n="metaSites">站点良品</dt>
         <dd id="lot-sites">—</dd>
       </div>
@@ -77,6 +81,7 @@
     <div class="stepper">
       <button type="button" class="ghost-btn" id="btn-prev" data-i18n="btnPrev">上一拍</button>
       <button type="button" class="primary-btn" id="btn-advance" data-i18n="btnAdvance">推进本站</button>
+      <button type="button" class="ghost-btn" id="btn-replay" data-i18n="btnReplay">重播本站</button>
     </div>
     <div class="toggle-row">
       <span data-i18n="modeLabel">推进方式</span>
@@ -133,6 +138,7 @@
         <dd class="mono" id="tool-lot">—</dd>
       </div>
     </dl>
+    <p class="tool-contract" id="tool-contract"></p>
     <button type="button" class="ghost-btn" id="btn-jump-tool" data-i18n="btnJumpTool">镜头跳至本站</button>
   </aside>
 
@@ -184,7 +190,7 @@
     </div>
   </div>
 
-  <div class="overlay" id="hold-layer" hidden>
+  <div id="hold-layer" hidden>
     <div class="hold-card panel">
       <div class="kicker" id="hold-kicker">HOLD</div>
       <h1 id="hold-title">—</h1>
