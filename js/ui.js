@@ -1,5 +1,5 @@
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
-import { BEATS, STAGES, STEPS } from "./mes.js";
+import { BEATS, STEPS } from "./mes.js";
 
 
 export function bindUI() {
@@ -12,6 +12,7 @@ export function bindUI() {
     lotCarrier: document.getElementById("lot-carrier"),
     lotRecipe: document.getElementById("lot-recipe"),
     lotSites: document.getElementById("lot-sites"),
+    lotMorph: document.getElementById("lot-morph"),
     genealogy: document.getElementById("genealogy"),
     beats: document.getElementById("mes-beats"),
     stageRail: document.getElementById("stage-rail"),
@@ -21,6 +22,7 @@ export function bindUI() {
     toolGroup: document.getElementById("tool-group"),
     toolRecipe: document.getElementById("tool-recipe"),
     toolLot: document.getElementById("tool-lot"),
+    toolContract: document.getElementById("tool-contract"),
     holdLayer: document.getElementById("hold-layer"),
     holdKicker: document.getElementById("hold-kicker"),
     holdTitle: document.getElementById("hold-title"),
@@ -33,6 +35,7 @@ export function bindUI() {
     btnAdvance: document.getElementById("btn-advance"),
     btnPrev: document.getElementById("btn-prev"),
     btnAuto: document.getElementById("btn-auto"),
+    btnReplay: document.getElementById("btn-replay"),
     btnLang: document.getElementById("btn-lang"),
   };
 }
@@ -62,13 +65,16 @@ export function renderLot(lang, session, snap, els) {
   els.lotStatus.className = `badge badge-${status}`;
   els.lotStep.textContent = `${stepIndex + 1}/${STEPS.length}  ${t(lang, "step_" + step.id)}`;
   els.lotTool.textContent = step.tool;
-  els.lotCarrier.textContent = t(lang, "carrier_" + session.displayCarrier());
   els.lotRecipe.textContent = step.recipe;
   els.lotSites.textContent = t(lang, "sitesLine", {
     good: lot.goodSites,
     total: lot.totalSites,
     scrap: lot.scrap,
   });
+  els.lotCarrier.textContent = t(lang, "carrier_" + session.carrierStation().id);
+  if (els.lotMorph && !els.lotMorph.dataset.live) {
+    els.lotMorph.textContent = t(lang, "morph_" + snap.morph);
+  }
 
   els.genealogy.innerHTML = "";
   for (const row of session.genealogy()) {
@@ -78,7 +84,10 @@ export function renderLot(lang, session, snap, els) {
     k.textContent = t(lang, row.key);
     const v = document.createElement("span");
     v.className = "g-v";
-    v.textContent = row.value === "gen_pending" ? t(lang, "gen_pending") : row.value;
+    const value = typeof row.value === "string" && (row.value === "gen_pending" || row.value.startsWith("gen_"))
+      ? t(lang, row.value)
+      : row.value;
+    v.textContent = value;
     li.append(k, v);
     els.genealogy.append(li);
   }
@@ -100,18 +109,17 @@ export function renderBeats(lang, snap, els) {
 
 export function renderStages(lang, snap, els) {
   els.stageRail.innerHTML = "";
-  const currentStage = snap.step.stage;
-  const doneStages = new Set();
-  for (let i = 0; i < snap.stepIndex; i++) doneStages.add(STEPS[i].stage);
-  for (const st of STAGES) {
+  for (let i = 0; i < STEPS.length; i++) {
+    const st = STEPS[i];
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "stage-chip";
+    btn.dataset.station = st.id;
     btn.dataset.stage = st.id;
-    btn.textContent = t(lang, "stage_" + st.id);
-    if (st.id === currentStage) btn.classList.add("is-current");
-    else if (doneStages.has(st.id)) btn.classList.add("is-done");
-    if (snap.status === "HOLD" && st.id === currentStage) {
+    btn.textContent = t(lang, "stage_" + st.stage);
+    if (i === snap.stepIndex && snap.status !== "DONE") btn.classList.add("is-current");
+    else if (i < snap.stepIndex || snap.status === "DONE") btn.classList.add("is-done");
+    if (snap.status === "HOLD" && i === snap.stepIndex) {
       btn.classList.add("is-hold");
       btn.classList.remove("is-current");
     }
@@ -157,8 +165,12 @@ export function showTool(lang, session, els, toolId) {
       : "bay_pack";
     els.toolGroup.textContent = t(lang, bayKey);
     els.toolRecipe.textContent = step.recipe;
+    if (els.toolContract) {
+      els.toolContract.textContent = `${t(lang, "chg_" + step.id)} ${t(lang, "out_" + step.id)}`;
+    }
   } else {
     els.toolRecipe.textContent = "—";
+    if (els.toolContract) els.toolContract.textContent = "";
   }
   const onThis = session && session.step().tool === toolId && session.status !== "QUEUE";
   els.toolLot.textContent = onThis ? session.lot.id : t(lang, "idleTool");
