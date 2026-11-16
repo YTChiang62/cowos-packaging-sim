@@ -1,8 +1,10 @@
 /**
- * Frozen HBX-100 route contract (trainer v2).
+ * HBX-100 route contract (trainer v3).
  *
- * One short route. Five stations. Genealogy, MES-style status, and the 3D
- * morph state all read this table — do not add a station here.
+ * One short route. Five process stations. Genealogy, MES-style status, the
+ * 3D morph state, the electronic warehouse, and the overhead crane all read
+ * this module — do not add a process station, and do not keep a second
+ * state machine beside it.
  *
  * Morphology commits only when that station's process finishes with no open
  * hold:
@@ -10,7 +12,12 @@
  *
  * A hold keeps the lot on its station. `blocksMorph` is the first morphology
  * that must not be committed while the hold is open (every later morphology
- * is blocked with it).
+ * is blocked with it). The same hold locks the carrier at that tool and
+ * refuses an overhead-crane delivery to any other process station.
+ *
+ * The stocker at the head of the aisle is a facility, not a sixth station.
+ * Zones, inventory status, crane modes, and the dock each station requires
+ * before its process may start are declared below.
  *
  * Refinements vs the v1 seventeen-step walk, recorded so the fields stay
  * explicit:
@@ -189,6 +196,204 @@ export const HOLDS = {
 
 const CONTRACT_FIELDS = ["name", "carrier", "in", "changes", "out", "hold"];
 
+/** Traveling-carrier codes the crane is allowed to couple. */
+export const CARRIER_TYPES = ["FOUP", "TRAY", "FRAME", "MAG"];
+
+/** Inventory status. Location is separate: bin / io / transit / port / tool. */
+export const INV_STATUS = ["stock", "reserved", "transit", "locked"];
+
+/**
+ * One stocker, four zones. Bins are the shelf slots drawn in 3D.
+ * DBK holds KGD trays, INT interposer FOUPs, SUB substrate magazines,
+ * FG finished JEDEC trays.
+ */
+export const ZONES = [
+  { id: "DBK", carrier: "TRAY", sku: "kgd", bins: ["A1", "A2", "A3"] },
+  { id: "INT", carrier: "FOUP", sku: "interposer", bins: ["B1", "B2", "B3"] },
+  { id: "SUB", carrier: "MAG", sku: "substrate", bins: ["C1", "C2", "C3"] },
+  { id: "FG", carrier: "TRAY", sku: "finished", bins: ["D1", "D2", "D3"] },
+];
+
+export const STOCKER = { id: "stocker", place: { x: -49.2, z: 0 } };
+
+export const OHT_MODES = ["AUTO", "MANUAL", "PAUSE"];
+export const VEHICLE_STATES = ["idle", "goto_pick", "hoist_pick", "travel", "hoist_drop", "paused"];
+export const VEHICLE_IDS = ["OHT-1", "OHT-2"];
+
+/** Training-range timings (seconds). Travel legs stay inside 3.2–4.8 s. */
+export const LEG = {
+  travelMin: 3.2,
+  travelMax: 4.8,
+  travelSpeed: 24,
+  hoist: 1.8,
+  handoff: 0.95,
+  stacker: 2.3,
+};
+
+export const RAIL_Y = 6.25;
+
+/**
+ * One-way ceiling loop. Warehouse I/O ports share the west leg.
+ * North leg: DBK-02 then HB-21. South leg runs back past BPK, WoS, and dice.
+ * A vehicle may pass another load port with the hoist up; it descends only
+ * at the port it was assigned.
+ */
+export const RAIL_NODES = [
+  { id: "ioDBK", x: -46, z: -2.4 },
+  { id: "ioINT", x: -46, z: -0.8 },
+  { id: "ioSUB", x: -46, z: 0.8 },
+  { id: "ioFG", x: -46, z: 2.4 },
+  { id: "westN", x: -46, z: -15.6 },
+  { id: "DBK-02", x: -34, z: -15.6 },
+  { id: "HB-21", x: -6, z: -15.6 },
+  { id: "eastN", x: 42, z: -15.6 },
+  { id: "eastS", x: 42, z: 15.6 },
+  { id: "BPK-05", x: 28, z: 15.6 },
+  { id: "WOS-04", x: 0, z: 15.6 },
+  { id: "DIC-81", x: -34, z: 15.6 },
+  { id: "westS", x: -46, z: 15.6 },
+];
+
+/** Local +Z of a tool's load port. World Z follows the station face. */
+export const LOAD_LOCAL_Z = 2.4;
+
+/**
+ * Where a crane may drop a carrier, and which types that port accepts.
+ * A mismatch is refused. `DBK-02:tray` is the die-bank shelf port; the
+ * traveling FOUP uses `DBK-02`. WoS takes a magazine on `WOS-04` and the
+ * singulated frame on `WOS-04:unit`.
+ */
+export const PORTS = {
+  "io:DBK": { accept: ["TRAY"], rail: "ioDBK", zone: "DBK", kind: "io" },
+  "io:INT": { accept: ["FOUP"], rail: "ioINT", zone: "INT", kind: "io" },
+  "io:SUB": { accept: ["MAG"], rail: "ioSUB", zone: "SUB", kind: "io" },
+  "io:FG": { accept: ["TRAY"], rail: "ioFG", zone: "FG", kind: "io" },
+  "DBK-02": { accept: ["FOUP"], rail: "DBK-02", tool: "DBK-02", stationId: "diebank", kind: "load" },
+  "DBK-02:tray": { accept: ["TRAY"], rail: "DBK-02", tool: "DBK-02", stationId: "diebank", kind: "load" },
+  "HB-21": { accept: ["FOUP"], rail: "HB-21", tool: "HB-21", stationId: "hbond", kind: "load" },
+  "DIC-81": { accept: ["FRAME"], rail: "DIC-81", tool: "DIC-81", stationId: "dice", kind: "load" },
+  "WOS-04": { accept: ["MAG"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
+  "WOS-04:unit": { accept: ["FRAME"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
+  "WOS-04:out": { accept: ["TRAY"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
+  "BPK-05": { accept: ["TRAY"], rail: "BPK-05", tool: "BPK-05", stationId: "ballpack", kind: "load" },
+};
+
+/**
+ * Carriers that must be handed off at the tool before that station's
+ * process animation or morph may start.
+ * KGD + interposer before station 1. Substrate only before WoS.
+ */
+export const DOCK_REQUIREMENTS = {
+  diebank: [
+    { port: "DBK-02:tray", type: "TRAY", role: "issue", zone: "DBK", sku: "kgd" },
+    { port: "DBK-02", type: "FOUP", role: "issue", zone: "INT", sku: "interposer", becomesLot: true },
+  ],
+  hbond: [
+    { port: "HB-21", type: "FOUP", role: "travel" },
+  ],
+  dice: [
+    { port: "DIC-81", type: "FRAME", role: "travel" },
+  ],
+  wos: [
+    { port: "WOS-04", type: "MAG", role: "issue", zone: "SUB", sku: "substrate" },
+    { port: "WOS-04:unit", type: "FRAME", role: "travel" },
+  ],
+  ballpack: [
+    { port: "BPK-05", type: "TRAY", role: "travel" },
+  ],
+};
+
+/** After pack, the finished JEDEC tray is put away to FG. */
+export const PUTAWAY = { stationId: "ballpack", zone: "FG", port: "io:FG", type: "TRAY" };
+
+/**
+ * Job-out presentation. The lot's traveling carrier waits at this port
+ * until a crane picks it up. Bond presents a FRAME (the FOUP returns to
+ * INT). WoS presents a JEDEC tray (the magazine returns to SUB).
+ */
+export const OUTPUT_PRESENT = {
+  diebank: { type: "FOUP", port: "DBK-02" },
+  hbond: { type: "FRAME", port: "HB-21", returnZone: "INT" },
+  dice: { type: "FRAME", port: "DIC-81" },
+  wos: { type: "TRAY", port: "WOS-04:out", returnZone: "SUB" },
+  ballpack: { type: "TRAY", port: "BPK-05", sku: "finished" },
+};
+
+export function portAccepts(portId, type) {
+  const port = PORTS[portId];
+  return !!(port && port.accept.includes(type));
+}
+
+export function returnZoneFor(carrier) {
+  if (!carrier) return null;
+  if (carrier.sku === "finished" || carrier.sku === "wip-tray") return "FG";
+  if (carrier.type === "FOUP") return "INT";
+  if (carrier.type === "MAG") return "SUB";
+  if (carrier.type === "TRAY") return carrier.sku === "kgd" || carrier.sku === "kgd-issued" ? "DBK" : "FG";
+  return null;
+}
+
+export function loadPortXZ(station) {
+  const face = station.place.face > 0 ? 1 : -1;
+  return {
+    x: station.place.x,
+    z: station.place.z + face * LOAD_LOCAL_Z,
+  };
+}
+
+let _rail = null;
+export function railPath() {
+  if (_rail) return _rail;
+  const segs = [];
+  let acc = 0;
+  for (let i = 0; i < RAIL_NODES.length; i++) {
+    const a = RAIL_NODES[i];
+    const b = RAIL_NODES[(i + 1) % RAIL_NODES.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    segs.push({ a, b, start: acc, len });
+    acc += len;
+  }
+  const at = {};
+  segs.forEach((seg, i) => { at[RAIL_NODES[i].id] = seg.start; });
+  _rail = { segs, length: acc, at };
+  return _rail;
+}
+
+export function nodeS(nodeId) {
+  const s = railPath().at[nodeId];
+  if (s == null) throw new Error(`unknown rail node ${nodeId}`);
+  return s;
+}
+
+export function forwardDistance(from, to) {
+  const length = railPath().length;
+  let d = to - from;
+  if (d < 0) d += length;
+  return d;
+}
+
+export function railPoint(s) {
+  const rail = railPath();
+  let u = s % rail.length;
+  if (u < 0) u += rail.length;
+  for (const seg of rail.segs) {
+    if (u <= seg.start + seg.len + 1e-6) {
+      const k = seg.len === 0 ? 0 : Math.min(1, Math.max(0, (u - seg.start) / seg.len));
+      return {
+        x: seg.a.x + (seg.b.x - seg.a.x) * k,
+        y: RAIL_Y,
+        z: seg.a.z + (seg.b.z - seg.a.z) * k,
+      };
+    }
+  }
+  return { x: RAIL_NODES[0].x, y: RAIL_Y, z: RAIL_NODES[0].z };
+}
+
+export function travelDuration(distance) {
+  if (distance < 0.3) return 0.7;
+  return Math.min(LEG.travelMax, Math.max(LEG.travelMin, distance / LEG.travelSpeed));
+}
+
 export function stationById(id) {
   return STATIONS.find((s) => s.id === id) || null;
 }
@@ -302,6 +507,41 @@ export function assertContract() {
   for (const s of STATIONS) {
     if (s.contract.hold && !owned.has(s.id)) errors.push(`${s.id} contract names a hold that is not wired`);
     if (!s.contract.hold && owned.has(s.id)) errors.push(`${s.id} has a hold the contract does not name`);
+  }
+  if (ZONES.map((z) => z.id).join(",") !== "DBK,INT,SUB,FG") errors.push("warehouse zones drifted");
+  if (INV_STATUS.join(",") !== "stock,reserved,transit,locked") errors.push("inventory status drifted");
+  if (OHT_MODES.join(",") !== "AUTO,MANUAL,PAUSE") errors.push("crane modes drifted");
+  if (VEHICLE_STATES.join(",") !== "idle,goto_pick,hoist_pick,travel,hoist_drop,paused") {
+    errors.push("vehicle states drifted");
+  }
+  if (VEHICLE_IDS.length !== 2) errors.push("expected two overhead vehicles");
+  const railIds = new Set(RAIL_NODES.map((n) => n.id));
+  for (const [id, port] of Object.entries(PORTS)) {
+    if (!railIds.has(port.rail)) errors.push(`port ${id} has no rail node`);
+    if (!port.accept?.length) errors.push(`port ${id} accepts nothing`);
+  }
+  for (const s of STATIONS) {
+    const reqs = DOCK_REQUIREMENTS[s.id];
+    if (!reqs?.length) errors.push(`${s.id} has no dock requirement`);
+    if (!OUTPUT_PRESENT[s.id]) errors.push(`${s.id} has no job-out presentation`);
+    const xz = loadPortXZ(s);
+    const node = RAIL_NODES.find((n) => n.id === s.tool);
+    if (!node) errors.push(`${s.tool} is not on the rail`);
+    else if (Math.hypot(node.x - xz.x, node.z - xz.z) > 0.2) {
+      errors.push(`${s.tool} rail node is not on the load port`);
+    }
+  }
+  const dieReq = DOCK_REQUIREMENTS.diebank.map((r) => r.zone).sort().join(",");
+  if (dieReq !== "DBK,INT") errors.push("station 1 must issue KGD and the interposer only");
+  if (DOCK_REQUIREMENTS.diebank.some((r) => r.zone === "SUB")) errors.push("substrate must not be issued at station 1");
+  if (!DOCK_REQUIREMENTS.wos.some((r) => r.zone === "SUB" && r.type === "MAG")) {
+    errors.push("substrate magazine must be issued before WoS");
+  }
+  if (PUTAWAY.zone !== "FG" || PUTAWAY.type !== "TRAY" || PUTAWAY.stationId !== "ballpack") {
+    errors.push("finished trays put away to FG after pack");
+  }
+  if (OUTPUT_PRESENT.hbond.type !== "FRAME" || OUTPUT_PRESENT.wos.type !== "TRAY") {
+    errors.push("job-out carrier presentation drifted");
   }
   return errors;
 }

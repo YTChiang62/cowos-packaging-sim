@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "../vendor/OrbitControls.js";
-import { HOLD_AT, STATIONS, stationById } from "./route.js";
+import { FacilityView } from "./facility-view.js";
+import { HOLD_AT, RAIL_Y, STATIONS, stationById } from "./route.js";
 import { motion, smooth, specForMorph } from "./morph.js";
 import { Workpiece } from "./product.js";
+import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
 
 const BAYS = [
@@ -185,29 +187,37 @@ export class Plant {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.32;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setClearColor(0x071016, 1);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x071016, 70, 160);
+    this.scene.fog = new THREE.Fog(0x071016, 140, 280);
     this.camera = new THREE.PerspectiveCamera(42, this._aspect(), 0.1, 220);
-    this.camera.position.set(2, 31, 33);
+    this.camera.position.set(4, 36, 42);
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI * 0.42;
     this.controls.minDistance = 4.5;
     this.controls.maxDistance = 80;
-    this.controls.target.set(-16, 0.2, 0);
+    this.controls.target.set(-32, 2, 0);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
 
     this._buildWorld();
     this._buildBays();
-    this._buildRails();
     this._buildTools();
-    this._buildShuttle();
+    this._buildDemoCarrier();
+    this.view = new FacilityView(this.scene);
+    this.view.sync({
+      carriers: seedCarriers({ id: "PREVIEW", wafer: "" }),
+      stacker: { phase: "idle", x: -0.4, y: 2.0, z: -0.2 },
+      vehicles: [
+        { id: "OHT-1", state: "idle", x: -46, y: RAIL_Y, z: -15.6, hoist: 0, onSiding: true },
+        { id: "OHT-2", state: "idle", x: 42, y: RAIL_Y, z: -15.6, hoist: 0, onSiding: true },
+      ],
+    }, this.tools, 1, null);
     this.workpiece = new Workpiece();
     this.scene.add(this.workpiece.group);
     this.showLot("bank", STATIONS[0].tool, "FOUP");
@@ -242,7 +252,13 @@ export class Plant {
     return this.mode === "live" || this.mode === "hold" || this.mode === "solo" || this.mode === "soloHold" || !!this.transport || !!this.handoff;
   }
 
+  watch(session) {
+    this.session = session || null;
+    this.facilityBound = !!session?.facility;
+  }
+
   showLot(morph, toolId, carrier) {
+    if (this.facilityBound) return;
     if (this.mode === "live" || this.mode === "hold" || this.mode === "solo" || this.mode === "soloHold") return;
     if (this.transport || this.handoff) return;
     if (this._shown && this._shown.morph === morph && this._shown.toolId === toolId && this._shown.carrier === carrier) return;
@@ -322,11 +338,19 @@ export class Plant {
     this.mode = "solo";
     this.solo = { stationId, acc: 0, dur: station.duration, wait: true };
     this._shown = null;
+    this.setCarrier(station.carrier);
+    this.carrier.visible = true;
+    if (this.carrier.parent !== this.scene) this.scene.attach(this.carrier);
+    this.carrier.position.copy(this.loadportWorld(station.tool));
+    this.carrier.attach(this.workpiece.group);
+    this.workpiece.group.position.set(0, 0.35, 0);
+    this.workpiece.group.scale.setScalar(0.42);
+    this.workpiece.compact = true;
+    this.focusWork(station.tool);
+    this._apply(stationId, 0, 0);
     this.dockTo(station.tool, () => {
       if (this.solo && this.solo.stationId === stationId) this.solo.wait = false;
     });
-    this.focusWork(station.tool);
-    this._apply(stationId, 0, 0);
     return true;
   }
 
@@ -336,6 +360,7 @@ export class Plant {
     this.solo = null;
     this.handoff = null;
     this._shown = null;
+    this.carrier.visible = false;
   }
 
   _apply(stationId, t, fault) {
@@ -360,7 +385,7 @@ export class Plant {
   }
 
   _buildWorld() {
-    const hemi = new THREE.HemisphereLight(0xc9e4ea, 0x1a120c, 1.05);
+    const hemi = new THREE.HemisphereLight(0xd5eef2, 0x24180e, 1.25);
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xf2e6d0, 1.35);
     sun.position.set(24, 40, 18);
@@ -368,15 +393,21 @@ export class Plant {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 4;
     sun.shadow.camera.far = 120;
-    sun.shadow.camera.left = -55;
-    sun.shadow.camera.right = 55;
-    sun.shadow.camera.top = 45;
-    sun.shadow.camera.bottom = -45;
+    sun.shadow.camera.left = -70;
+    sun.shadow.camera.right = 60;
+    sun.shadow.camera.top = 50;
+    sun.shadow.camera.bottom = -50;
     sun.shadow.bias = -0.0007;
     this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x4aa89c, 0.28);
-    fill.position.set(-20, 18, -10);
+    const fill = new THREE.DirectionalLight(0x4aa89c, 0.35);
+    fill.position.set(-30, 22, -12);
     this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0x9fd4ff, 0.22);
+    rim.position.set(-40, 18, 30);
+    this.scene.add(rim);
+    const stockerLight = new THREE.PointLight(0xf0c08a, 8, 22);
+    stockerLight.position.set(-46, 4.2, 0);
+    this.scene.add(stockerLight);
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(100, 80),
@@ -451,19 +482,15 @@ export class Plant {
     }
   }
 
-  _buildRails() {
-    const railMat = stdMat(0x5a4630, { metalness: 0.7, roughness: 0.4 });
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(86, 0.08, 0.22), railMat);
-    rail.position.set(-2, 4.85, 0);
-    this.scene.add(rail);
-    const rail2 = rail.clone();
-    rail2.position.z = 0.45;
-    this.scene.add(rail2);
-    for (const station of STATIONS) {
-      const spur = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, Math.abs(station.place.z) + 0.2), railMat);
-      spur.position.set(station.place.x, 4.85, station.place.z / 2);
-      this.scene.add(spur);
-    }
+  _buildDemoCarrier() {
+    this.carrier = new THREE.Group();
+    this.shell = new THREE.Group();
+    this.carrierAnchor = new THREE.Group();
+    this.carrier.add(this.shell);
+    this.carrier.add(this.carrierAnchor);
+    this.carrier.visible = false;
+    this.scene.add(this.carrier);
+    this.setCarrier("FOUP");
   }
 
   _buildTools() {
@@ -491,25 +518,7 @@ export class Plant {
   }
 
   _buildShuttle() {
-    this.shuttle = new THREE.Group();
-    const barMat = stdMat(0xb8874e, { metalness: 0.7, roughness: 0.35 });
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.12, 0.7), barMat);
-    this.shuttle.add(bar);
-    for (const x of [-0.4, 0, 0.4]) {
-      const hook = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.7, 0.08), barMat);
-      hook.position.set(x, -0.4, 0);
-      this.shuttle.add(hook);
-    }
-    this.shuttle.position.set(STATIONS[0].place.x, 4.9, 0);
-    this.scene.add(this.shuttle);
-
-    this.carrier = new THREE.Group();
-    this.shell = new THREE.Group();
-    this.carrierAnchor = new THREE.Group();
-    this.carrier.add(this.shell);
-    this.carrier.add(this.carrierAnchor);
-    this.scene.add(this.carrier);
-    this.setCarrier("FOUP");
+    /* The overhead vehicles live in FacilityView. Solo replay uses the demo carrier. */
   }
 
   setCarrier(type) {
@@ -536,7 +545,7 @@ export class Plant {
     this.carrier.position.copy(p);
     this.currentToolId = toolId;
     const rec = this.tools.get(toolId);
-    this.shuttle.position.set(rec.group.position.x, 4.9, rec.group.position.z * 0.15);
+    /* demo carrier stays at the load port */
   }
 
   _reparent(parent, toPos, toScale, done) {
@@ -602,15 +611,16 @@ export class Plant {
         }
         this.pickup = null;
         this.transport = { segs, acc: 0, resolve, toolId };
-        this.shuttle.position.set(a.x, 4.9, a.z);
+        /* crane path is driven by the facility snapshot */
       };
       this._stow(startPath);
     });
   }
 
   setFollow(on) {
-    this.follow = on;
-    this.controls.enabled = !on;
+    if (on === "crane" || on === "lot") this.follow = on;
+    else this.follow = on ? "lot" : false;
+    this.controls.enabled = !this.follow;
   }
 
   focusOverview() {
@@ -619,8 +629,8 @@ export class Plant {
     this._camTween = {
       fromP: this.camera.position.clone(),
       fromT: this.controls.target.clone(),
-      toP: new THREE.Vector3(2, 31, 33),
-      toT: new THREE.Vector3(-16, 0.2, 0),
+      toP: new THREE.Vector3(4, 36, 42),
+      toT: new THREE.Vector3(-32, 2, 0),
       acc: 0,
       dur: 1.0,
     };
@@ -719,8 +729,8 @@ export class Plant {
       pos = seg.b;
     }
     const lifted = tr.acc > tr.segs[0].dur * 0.85;
-    if (lifted && this.carrier.parent !== this.shuttle) {
-      this.shuttle.attach(this.carrier);
+    if (lifted && this.carrier.parent !== this.scene) {
+      this.scene.attach(this.carrier);
       this.pickup = {
         from: this.carrier.position.clone(),
         to: new THREE.Vector3(0, -1.15, 0),
@@ -728,7 +738,7 @@ export class Plant {
         dur: 0.4,
       };
     }
-    this.shuttle.position.set(pos.x, Math.max(pos.y, 4.55), pos.z);
+    this.carrier.position.set(pos.x, Math.max(pos.y, 1.2), pos.z);
     if (!lifted) this.carrier.position.copy(tr.segs[0].a);
     else if (this.pickup) {
       this.pickup.acc += dt;
@@ -741,10 +751,66 @@ export class Plant {
       this.carrier.position.copy(this.loadportWorld(tr.toolId));
       this.currentToolId = tr.toolId;
       const rec = this.tools.get(tr.toolId);
-      this.shuttle.position.set(rec.group.position.x, 4.9, rec.group.position.z * 0.2);
+      /* dropped at the load port */
       const resolve = tr.resolve;
       this.transport = null;
       this.dockTo(tr.toolId, resolve);
+    }
+  }
+
+  _syncFacility(dt) {
+    const facility = this.session?.facility;
+    if (!facility || !this.view) return;
+    this.facilityBound = true;
+    const snap = facility.snapshot();
+    this._snap = snap;
+    const soloTool = this.solo ? stationById(this.solo.stationId)?.tool : null;
+    if (this.mode !== "solo" && this.mode !== "soloHold") this.carrier.visible = false;
+    this.view.sync(snap, this.tools, dt, soloTool);
+    if (this.mode === "solo" || this.mode === "soloHold") return;
+    const lot = snap.lotCarrierId ? snap.carriers.find((c) => c.id === snap.lotCarrierId) : null;
+    const atTool = !!(lot && String(lot.location).startsWith("tool:"));
+    const processing = (this.mode === "live" || this.mode === "hold") && this.live && this.live.t < 0.999;
+    if (this.handoff || processing || (atTool && (this.mode === "live" || this.mode === "hold"))) return;
+    if (!lot) {
+      const tool = this.tools.get(STATIONS[0].tool);
+      if (tool && this.workpiece.group.parent !== tool.chuck) {
+        tool.chuck.attach(this.workpiece.group);
+        this.workpiece.group.position.set(0, 0, 0);
+        this.workpiece.group.scale.setScalar(1);
+        this.workpiece.compact = false;
+      }
+      if (this.holdId === "kgd") this._apply("diebank", 0.42, 1);
+      return;
+    }
+    if (atTool) {
+      const rec = this.tools.get(lot.location.slice(5));
+      if (rec && this.workpiece.group.parent !== rec.chuck) {
+        rec.chuck.attach(this.workpiece.group);
+        this.workpiece.group.position.set(0, 0, 0);
+        this.workpiece.group.scale.setScalar(1);
+        this.workpiece.compact = false;
+      }
+      if (this.mode !== "live" && this.mode !== "hold") {
+        const spec = specForMorph(this.lotMorph || "bank");
+        this._apply(spec.station, spec.t, 0);
+      }
+      return;
+    }
+    const shell = this.view.carriers.get(lot.id)?.group;
+    if (!shell) return;
+    if (this.workpiece.group.parent !== shell) shell.attach(this.workpiece.group);
+    this.workpiece.group.position.set(0, 0.42, 0.15);
+    this.workpiece.group.scale.setScalar(0.38);
+    this.workpiece.compact = true;
+    if (this.mode === "live" && this.live && this.live.t >= 0.999) {
+      this.mode = "idle";
+      this.live = null;
+      this.frozen = false;
+    }
+    if (this.mode !== "live" && this.mode !== "hold") {
+      const spec = specForMorph(this.lotMorph || "bank");
+      this._apply(spec.station, spec.t, 0);
     }
   }
 
@@ -761,9 +827,16 @@ export class Plant {
       this.controls.target.lerpVectors(tw.fromT, tw.toT, k);
       this.camera.lookAt(this.controls.target);
       if (k >= 1) this._camTween = null;
-    } else if (this.follow) {
+    } else if (this.follow === "lot" || this.follow === true) {
       const target = this.workpiece.group.getWorldPosition(new THREE.Vector3());
       const desired = target.clone().add(new THREE.Vector3(6, 5.5, 7));
+      this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
+      this.controls.target.lerp(target, 1 - Math.pow(0.001, dt));
+      this.camera.lookAt(this.controls.target);
+    } else if (this.follow === "crane" && this._snap?.vehicles?.length) {
+      const active = this._snap.vehicles.find((v) => v.state !== "idle" && v.state !== "paused") || this._snap.vehicles[0];
+      const target = new THREE.Vector3(active.x, 2.4, active.z);
+      const desired = target.clone().add(new THREE.Vector3(8, 7, 9));
       this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
       this.controls.target.lerp(target, 1 - Math.pow(0.001, dt));
       this.camera.lookAt(this.controls.target);
@@ -773,6 +846,7 @@ export class Plant {
 
     this._stepHandoff(scaled);
     this._stepTransport(scaled);
+    this._syncFacility(dt);
 
     const playing = (this.mode === "live" && !this.frozen) || (this.mode === "solo" && this.solo && !this.solo.wait);
     if (playing) this.spin += scaled * 14;

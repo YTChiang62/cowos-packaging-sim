@@ -2,7 +2,7 @@ import { LANGS, t, applyStaticI18n } from "./i18n.js";
 import { Session, STEPS } from "./mes.js";
 import { Plant } from "./plant.js";
 import {
-  bindUI, renderAll, showTool, hideTool, showToast, showRadio, showDone,
+  bindUI, renderAll, renderFacility, showTool, hideTool, showToast, showRadio, showDone,
 } from "./ui.js";
 
 const canvas = document.getElementById("view");
@@ -25,12 +25,14 @@ els.btnLang.textContent = "繁";
 
 function attachSession(session) {
   state.session = session;
+  plant.watch(session);
   session.on("change", () => {
     renderAll(state.lang, session, els);
+    renderFacility(state.lang, session);
     syncPlantStatus();
   });
-  session.on("transport", ({ to, carrier }) => {
-    plant.moveTo(to.tool, carrier || session.travelCarrier()).then(() => session.transportDone());
+  session.on("transport", () => {
+    /* The crane snapshot moves the carrier. Process waits until it is docked. */
   });
   session.on("process", ({ step, fault }) => {
     plant.beginLive(step.id, fault);
@@ -39,6 +41,7 @@ function attachSession(session) {
   session.on("toast", ({ key, vars }) => showToast(state.lang, key, vars));
   session.on("radio", (key) => showRadio(state.lang, key));
   session.on("hold", () => {
+    plant.holdId = session.hold?.id || null;
     plant.freeze();
     plant.focusWork(session.step().tool);
     plant.setFollow(false);
@@ -61,6 +64,7 @@ function attachSession(session) {
     }
   });
   renderAll(state.lang, session, els);
+  renderFacility(state.lang, session);
   plant.showLot(session.morph, session.step().tool, session.displayCarrier());
   syncPlantStatus();
 }
@@ -141,6 +145,8 @@ document.getElementById("btn-restart").addEventListener("click", () => {
   els.doneLayer.hidden = true;
   els.startLayer.hidden = false;
   state.session = null;
+  plant.watch(null);
+  plant.holdId = null;
   plant.cancelSolo();
   plant.endLive();
   plant.clearStatuses();
@@ -237,18 +243,58 @@ document.getElementById("btn-jump-tool").addEventListener("click", () => {
 document.getElementById("btn-cam-overview").addEventListener("click", () => {
   plant.setFollow(false);
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+  document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
   plant.focusOverview();
 });
 document.getElementById("btn-cam-follow").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));
-  plant.setFollow(on);
+  document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
+  plant.setFollow(on ? "lot" : false);
+});
+document.getElementById("btn-cam-crane").addEventListener("click", (e) => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  e.currentTarget.setAttribute("aria-pressed", String(on));
+  document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+  plant.setFollow(on ? "crane" : false);
 });
 document.getElementById("btn-cam-tool").addEventListener("click", () => {
   if (!state.session) return;
   plant.setFollow(false);
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
   plant.focusTool(state.session.step().tool);
+});
+
+document.getElementById("oht-modes").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-oht]");
+  if (!btn || !state.session) return;
+  state.session.facility.setMode(btn.dataset.oht);
+  renderFacility(state.lang, state.session);
+  state.session.change();
+});
+document.getElementById("btn-call").addEventListener("click", () => {
+  const session = state.session;
+  if (!session) return;
+  const carrierId = document.getElementById("oht-src").value;
+  const to = document.getElementById("oht-dst").value;
+  const res = session.facility.requestMove({ carrierId, to });
+  if (!res.ok) showToast(state.lang, "moveRefused", { reason: res.reason || "refused" });
+  renderFacility(state.lang, session);
+});
+document.getElementById("btn-dispatch").addEventListener("click", () => {
+  const session = state.session;
+  if (!session) return;
+  const res = session.facility.dispatchQueued();
+  if (!res.ok) showToast(state.lang, "moveRefused", { reason: res.reason || "refused" });
+  renderFacility(state.lang, session);
+});
+document.getElementById("btn-return-stock").addEventListener("click", () => {
+  const session = state.session;
+  if (!session) return;
+  const id = session.facility.lotCarrierId || document.getElementById("oht-src").value;
+  const res = session.facility.returnToStock(id);
+  if (!res.ok) showToast(state.lang, "moveRefused", { reason: res.reason || "refused" });
+  renderFacility(state.lang, session);
 });
 
 document.getElementById("stage-rail").addEventListener("click", (e) => {
@@ -296,7 +342,14 @@ window.addEventListener("keydown", (e) => {
     const btn = document.getElementById("btn-cam-follow");
     const on = btn.getAttribute("aria-pressed") !== "true";
     btn.setAttribute("aria-pressed", String(on));
-    plant.setFollow(on);
+    document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
+    plant.setFollow(on ? "lot" : false);
+  } else if (e.key === "3") {
+    const btn = document.getElementById("btn-cam-crane");
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.setAttribute("aria-pressed", String(on));
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    plant.setFollow(on ? "crane" : false);
   } else if (e.key === "1") {
     plant.setFollow(false);
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
@@ -312,9 +365,14 @@ let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  if (state.session) {
+    plant.lotMorph = state.session.morph;
+    plant.holdId = state.session.hold?.id || null;
+  }
   state.session?.tick(dt);
   const spd = state.session ? state.session.speed : 1;
   plant.update(dt, spd);
+  renderFacility(state.lang, state.session);
   paintMorph();
   requestAnimationFrame(loop);
 }

@@ -184,8 +184,11 @@ export function showToast(lang, key, vars) {
   const el = document.getElementById("toast");
   let text = t(lang, key, vars || {});
   // If vars.step was a key, translate it
-  if (vars?.step && vars.step.startsWith("step_")) {
+  if (vars?.step && String(vars.step).startsWith("step_")) {
     text = t(lang, key, { ...vars, step: t(lang, vars.step) });
+  }
+  if (vars?.reason) {
+    text = t(lang, key, { ...vars, reason: t(lang, "reason_" + vars.reason) });
   }
   el.textContent = text;
   el.hidden = false;
@@ -197,6 +200,126 @@ export function showRadio(lang, key) {
   const el = document.getElementById("radio-dock");
   el.innerHTML = t(lang, key);
   el.classList.add("is-on");
+}
+
+function locationText(lang, location) {
+  const loc = location || "";
+  if (loc.startsWith("bin:")) {
+    const [, zone, slot] = loc.split(":");
+    return `${t(lang, "loc_bin")} ${zone}/${slot}`;
+  }
+  if (loc.startsWith("io:")) return `${t(lang, "loc_io")} ${loc.slice(3)}`;
+  if (loc.startsWith("transit:")) return `${t(lang, "loc_transit")} ${loc.slice(8)}`;
+  if (loc.startsWith("port:")) return `${t(lang, "loc_port")} ${loc.slice(5)}`;
+  if (loc.startsWith("tool:")) return `${t(lang, "loc_tool")} ${loc.slice(5)}`;
+  if (loc === "stacker") return t(lang, "loc_stacker");
+  return loc || "—";
+}
+
+export function renderFacility(lang, session) {
+  const dock = document.getElementById("facility-dock");
+  if (!dock) return;
+  const snap = session?.facility?.snapshot?.();
+  if (!snap) {
+    dock.dataset.sig = "";
+    return;
+  }
+  const sig = [
+    snap.mode,
+    snap.vehicles.map((v) => `${v.id}:${v.state}:${v.carrying || ""}:${v.waiting ? 1 : 0}`).join("|"),
+    snap.carriers.map((c) => `${c.id}:${c.location}:${c.status}:${c.qty}`).join("|"),
+    snap.log.map((e) => e.seq).join(","),
+  ].join("~");
+  if (dock.dataset.sig === sig && dock.dataset.lang === lang) return;
+  dock.dataset.sig = sig;
+  dock.dataset.lang = lang;
+
+  const zones = document.getElementById("wh-zones");
+  zones.replaceChildren();
+  for (const id of ["DBK", "INT", "SUB", "FG"]) {
+    const chip = document.createElement("span");
+    const rows = snap.carriers.filter((c) => c.zone === id && String(c.location).startsWith(`bin:${id}`));
+    const locked = rows.some((c) => c.status === "locked" || c.qty <= 0);
+    chip.className = `zone-chip${locked && id === "DBK" ? " is-locked" : ""}`;
+    chip.textContent = `${t(lang, "zone_" + id)} ${rows.filter((c) => c.qty > 0).length}`;
+    zones.append(chip);
+  }
+
+  const body = document.getElementById("wh-body");
+  body.replaceChildren();
+  for (const carrier of snap.carriers) {
+    const tr = document.createElement("tr");
+    if (carrier.status === "locked") tr.className = "is-locked";
+    if (carrier.status === "transit") tr.className = "is-transit";
+    const cells = [
+      locationText(lang, carrier.location),
+      carrier.lotId || "—",
+      carrier.type,
+      String(carrier.qty),
+      t(lang, "st_" + carrier.status),
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+
+  document.querySelectorAll("#oht-modes [data-oht]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.oht === snap.mode));
+  });
+  const fleet = document.getElementById("oht-vehicles");
+  fleet.replaceChildren();
+  for (const vehicle of snap.vehicles) {
+    const row = document.createElement("div");
+    row.className = `veh veh-${vehicle.state}`;
+    const name = document.createElement("b");
+    name.textContent = vehicle.id;
+    const state = document.createElement("span");
+    state.textContent = t(lang, "veh_" + vehicle.state);
+    const load = document.createElement("em");
+    load.textContent = vehicle.carrying || (vehicle.waiting ? "…" : "");
+    row.append(name, state, load);
+    fleet.append(row);
+  }
+
+  const src = document.getElementById("oht-src");
+  const dst = document.getElementById("oht-dst");
+  const keepSrc = src.value;
+  const keepDst = dst.value;
+  src.replaceChildren();
+  for (const carrier of snap.carriers) {
+    const opt = document.createElement("option");
+    opt.value = carrier.id;
+    opt.textContent = `${carrier.id} · ${carrier.type}`;
+    src.append(opt);
+  }
+  if ([...src.options].some((o) => o.value === keepSrc)) src.value = keepSrc;
+  const ports = ["io:DBK", "io:INT", "io:SUB", "io:FG", "DBK-02", "DBK-02:tray", "HB-21", "DIC-81", "WOS-04", "WOS-04:unit", "WOS-04:out", "BPK-05"];
+  if (!dst.options.length) {
+    for (const port of ports) {
+      const opt = document.createElement("option");
+      opt.value = port;
+      opt.textContent = port;
+      dst.append(opt);
+    }
+  }
+  if (keepDst) dst.value = keepDst;
+
+  const dispatch = document.getElementById("btn-dispatch");
+  dispatch.hidden = snap.mode === "AUTO";
+  dispatch.disabled = snap.mode === "PAUSE" || snap.queued.length === 0;
+
+  const log = document.getElementById("wh-log");
+  log.replaceChildren();
+  for (const entry of [...snap.log].reverse()) {
+    const li = document.createElement("li");
+    const kind = t(lang, "log_" + entry.kind);
+    const why = entry.reason ? ` · ${t(lang, "reason_" + entry.reason)}` : "";
+    li.textContent = `${kind} ${entry.carrierId || entry.zone || ""}${entry.type ? " " + entry.type : ""}${why}`;
+    log.append(li);
+  }
 }
 
 export function showDone(lang, session, els) {

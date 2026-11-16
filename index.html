@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="APEX-3D 封装试点线：CoWoS 类先进封装培训原型。虚构产线，非任何真实工厂之数字孪生。" />
-  <title>APEX-3D 封装试点线</title>
+  <title>APEX-3D 封裝試點線</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23071016'/%3E%3Crect x='4' y='23' width='24' height='4' rx='1' fill='%23d3925a'/%3E%3Crect x='7' y='13' width='8' height='9' rx='1' fill='%23c8e8e4'/%3E%3Crect x='17' y='16' width='2.4' height='6' fill='%233ee0c0'/%3E%3Crect x='20.2' y='16' width='2.4' height='6' fill='%233ee0c0'/%3E%3Crect x='23.4' y='16' width='2.4' height='6' fill='%233ee0c0'/%3E%3Crect x='17' y='13.4' width='8.8' height='2' fill='%238aa3a8'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./css/app.css" />
   <script type="importmap">
@@ -142,10 +142,46 @@
     <button type="button" class="ghost-btn" id="btn-jump-tool" data-i18n="btnJumpTool">镜头跳至本站</button>
   </aside>
 
+  <aside class="facility-dock panel" id="facility-dock">
+    <div class="kicker" data-i18n="whKicker">電子倉庫</div>
+    <div class="zone-row" id="wh-zones"></div>
+    <div class="wh-table-wrap">
+      <table class="wh-table">
+        <thead>
+          <tr>
+            <th data-i18n="colLoc">儲位</th>
+            <th data-i18n="colLot">批次</th>
+            <th data-i18n="colCarrier">載具</th>
+            <th data-i18n="colQty">數量</th>
+            <th data-i18n="colStatus">狀態</th>
+          </tr>
+        </thead>
+        <tbody id="wh-body"></tbody>
+      </table>
+    </div>
+    <div class="kicker oht-kicker"><span data-i18n="ohtKicker">天車</span> <small>OHT</small></div>
+    <div class="seg" id="oht-modes" role="group">
+      <button type="button" data-oht="AUTO" data-i18n="modeAuto">自動派車</button>
+      <button type="button" data-oht="MANUAL" data-i18n="modeManual">手動叫車</button>
+      <button type="button" data-oht="PAUSE" data-i18n="modePause">暫停</button>
+    </div>
+    <div id="oht-vehicles" class="veh-list"></div>
+    <div class="call-row">
+      <select id="oht-src" aria-label="source"></select>
+      <select id="oht-dst" aria-label="destination"></select>
+      <button type="button" id="btn-call" data-i18n="btnCall">叫車</button>
+    </div>
+    <button type="button" class="ghost-btn" id="btn-dispatch" data-i18n="btnDispatch">派這一趟</button>
+    <button type="button" class="ghost-btn" id="btn-return-stock" data-i18n="btnReturnStock">退倉</button>
+    <div class="kicker" data-i18n="logKicker">出入庫紀錄</div>
+    <ul id="wh-log" class="wh-log"></ul>
+  </aside>
+
   <div class="cam-dock panel">
-    <button type="button" id="btn-cam-overview" data-i18n="camOverview">总览</button>
-    <button type="button" id="btn-cam-follow" aria-pressed="false" data-i18n="camFollow">跟随批次</button>
-    <button type="button" id="btn-cam-tool" data-i18n="camTool">看当前站</button>
+    <button type="button" id="btn-cam-overview" data-i18n="camOverview">總覽</button>
+    <button type="button" id="btn-cam-follow" aria-pressed="false" data-i18n="camFollow">跟隨批次</button>
+    <button type="button" id="btn-cam-crane" aria-pressed="false" data-i18n="camCrane">跟隨天車</button>
+    <button type="button" id="btn-cam-tool" data-i18n="camTool">看當前站</button>
   </div>
 
   <footer class="disclaimer" data-i18n="disclaimer">
