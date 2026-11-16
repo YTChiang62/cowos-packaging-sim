@@ -8,22 +8,18 @@ import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
 
 const BAYS = [
-  { id: "incoming", x: -34, z: -16, w: 20, d: 18, color: 0x3a2a1c },
-  { id: "cow", x: -5, z: -16, w: 28, d: 18, color: 0x102824 },
-  { id: "grind", x: 24, z: -16, w: 18, d: 18, color: 0x152028 },
-  { id: "dice", x: -34, z: 16, w: 20, d: 18, color: 0x1a1a30 },
-  { id: "wos", x: -2, z: 16, w: 32, d: 18, color: 0x2a2214 },
-  { id: "test", x: 23, z: 16, w: 11, d: 18, color: 0x102420 },
-  { id: "pack", x: 34, z: 16, w: 10, d: 18, color: 0x262018 },
+  { id: "incoming", x: -36.75, z: -18, w: 16, d: 12, color: 0x3a2a1c },
+  { id: "cow", x: -12, z: -18, w: 32, d: 12, color: 0x102824 },
+  { id: "dice", x: -34, z: 18, w: 18, d: 12, color: 0x1a1a30 },
+  { id: "wos", x: -8, z: 18, w: 32, d: 12, color: 0x2a2214 },
+  { id: "pack", x: 24.5, z: 18, w: 32, d: 12, color: 0x262018 },
 ];
 
 const BAY_ACCENT = {
   incoming: 0xd3925a,
   cow: 0x3ee0c0,
-  grind: 0x7ec8e0,
   dice: 0x8aa0ff,
   wos: 0xe0a15a,
-  test: 0x5ee0c8,
   pack: 0xd7c4a0,
 };
 
@@ -194,14 +190,14 @@ export class Plant {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.Fog(0x071016, 140, 280);
     this.camera = new THREE.PerspectiveCamera(42, this._aspect(), 0.1, 220);
-    this.camera.position.set(4, 36, 42);
+    this.camera.position.set(2, 40, 48);
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI * 0.42;
-    this.controls.minDistance = 4.5;
-    this.controls.maxDistance = 80;
-    this.controls.target.set(-32, 2, 0);
+    this.controls.minDistance = 3.2;
+    this.controls.maxDistance = 90;
+    this.controls.target.set(-6, 1.2, 0);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
 
@@ -327,7 +323,7 @@ export class Plant {
     const spec = specForMorph("packed");
     this._apply(spec.station, 1, 0);
     this.workpiece.setCaption(this.tFn("cap_packed"));
-    this._shown = { morph: "packed", toolId: stationById("ballpack").tool, carrier: "TRAY" };
+    this._shown = { morph: "packed", toolId: stationById("pack").tool, carrier: "TRAY" };
   }
 
   playSolo(stationId) {
@@ -498,7 +494,8 @@ export class Plant {
       const built = buildTool(station);
       const accent = "#" + BAY_ACCENT[station.place.bay].toString(16).padStart(6, "0");
       const label = labelSprite(station.tool, station.id, accent);
-      label.position.set(0, 3.25, 0);
+      label.scale.set(2.7, 0.68, 1);
+      label.position.set(0, 2.35, 0);
       built.group.add(label);
       const work = new THREE.PointLight(0xfff4e4, 1.8, 7);
       work.position.set(0, 1.45, 0.2);
@@ -629,8 +626,8 @@ export class Plant {
     this._camTween = {
       fromP: this.camera.position.clone(),
       fromT: this.controls.target.clone(),
-      toP: new THREE.Vector3(4, 36, 42),
-      toT: new THREE.Vector3(-32, 2, 0),
+      toP: new THREE.Vector3(2, 40, 48),
+      toT: new THREE.Vector3(-6, 1.2, 0),
       acc: 0,
       dur: 1.0,
     };
@@ -646,7 +643,7 @@ export class Plant {
     rec.chuck.getWorldPosition(chuckWorld);
     const front = new THREE.Vector3(0, 0, 1).applyQuaternion(rec.group.quaternion);
     const side = new THREE.Vector3(front.z, 0, -front.x);
-    const toP = chuckWorld.clone().add(front.multiplyScalar(6.6)).add(side.multiplyScalar(2.8)).add(new THREE.Vector3(0, 3.05, 0));
+    const toP = chuckWorld.clone().add(front.multiplyScalar(5.2)).add(side.multiplyScalar(2.1)).add(new THREE.Vector3(0, 2.4, 0));
     const toT = chuckWorld.clone().add(new THREE.Vector3(0, 0.35, 0));
     this._camTween = {
       fromP: this.camera.position.clone(),

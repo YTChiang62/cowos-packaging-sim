@@ -1,13 +1,13 @@
 /**
- * Pure pose math for the five HBX-100 stations.
+ * Pure pose math for the HBX-100 flow.
  * No Three.js. Product meshes and tool heads both read `motion()`.
  *
- * Continuity rule: station N at t=0, fault=0 equals station N-1 at t=1, fault=0.
- * A hold is fault=1 frozen near t=0.42. That pose must show the failure
- * and must not already be the next station's committed morphology.
+ * Continuity rule: operation N at t=0, fault=0 equals operation N-1 at t=1, fault=0.
+ * A hold is fault=1 frozen near t=0.42. That pose shows the failure and is
+ * not the next committed morphology.
  */
 
-import { STATIONS } from "./route.js";
+import { FLOW, stationById } from "./route.js";
 
 export function smooth(t) {
   t = Math.min(1, Math.max(0, t));
@@ -53,10 +53,14 @@ function base() {
     ring: 0,
     pockets: 1,
     fiducial: 0,
+    thin: 0,
+    fillet: 0,
+    filletCure: 0,
+    mark: 0,
+    bondGlow: 0,
   };
 }
 
-/** Bare KGD still sitting in the die-bank pockets, next to the source wafer. */
 export function poseBank() {
   return base();
 }
@@ -94,19 +98,33 @@ export function poseBonded(offset) {
   p.fiducial = 1;
   p.ring = Math.abs(offset) > 0.05 ? 1 : 0;
   p.sub = { x: 1.55, y: 0, z: 0, op: 0, warp: 0 };
+  p.thin = 0;
+  return p;
+}
+
+/** Same stack after backgrind. The wafer and the die stack read thinner. */
+export function poseThinned() {
+  const p = poseBonded(0);
+  p.thin = 1;
+  p.wafer = { x: 0, y: 0.02, z: 0, s: 1, op: 1 };
+  p.stack = { x: 0, y: 0.04, z: 0, s: 1 };
+  return p;
+}
+
+/** Thinned wafer on dicing tape. Still one piece. */
+export function poseMounted() {
+  const p = poseThinned();
+  p.frameOp = 1;
+  p.tapeOp = 1;
   return p;
 }
 
 /** Four separated stacks on dicing tape. The full wafer is gone. */
 export function poseSingulated() {
-  const p = poseBonded(0);
+  const p = poseMounted();
   p.wafer = { x: 0, y: 0.02, z: 0, s: 0.15, op: 0 };
-  p.stack = { x: -0.62, y: 0.08, z: 0.58, s: 0.55 };
+  p.stack = { x: -0.62, y: 0.06, z: 0.58, s: 0.55 };
   p.couponOp = 1;
-  p.frameOp = 1;
-  p.tapeOp = 1;
-  p.kerfX = 0;
-  p.kerfZ = 0;
   p.cloneOp = 1;
   p.cloneSpread = 1;
   p.fiducial = 0;
@@ -134,38 +152,97 @@ export function poseWos(warp, seat) {
   p.sub = { x: 0, y: 0, z: 0, op: 1, warp };
   p.fiducial = 0;
   p.ring = 0;
+  p.fillet = 0;
+  p.balls = 0;
+  p.trayOp = 0;
   return p;
 }
 
-/** WoS assembly plus ball array and JEDEC tray. `voidS` is the underfill bubble. */
-export function posePacked(balls, trayAmt, voidS) {
+/** Dispensed, not yet cured. */
+export function poseWet() {
   const p = poseWos(0, 1);
-  p.balls = balls;
-  p.trayOp = trayAmt;
-  p.trayX = lerp(1.35, 0, trayAmt);
-  p.voidS = voidS;
-  p.stack = { ...p.stack, y: p.stack.y - trayAmt * 0.05 };
-  p.sub = { ...p.sub, y: -trayAmt * 0.02 };
+  p.fillet = 0.72;
+  p.filletCure = 0;
+  p.voidS = 0;
   return p;
 }
 
-/** Pose for one station at time t (0..1) and fault (0 good, 1 held). */
+/** Cured fillet. Balls are still absent. */
+export function poseUnderfilled() {
+  const p = poseWet();
+  p.fillet = 1;
+  p.filletCure = 1;
+  return p;
+}
+
+export function poseBalled() {
+  const p = poseUnderfilled();
+  p.balls = 1;
+  p.mark = 0;
+  p.trayOp = 0;
+  return p;
+}
+
+export function poseMarked() {
+  const p = poseBalled();
+  p.mark = 1;
+  return p;
+}
+
+export function posePacked() {
+  const p = poseMarked();
+  p.trayOp = 1;
+  p.trayX = 0;
+  p.voidS = 0;
+  p.stack = { ...p.stack, y: p.stack.y - 0.05 };
+  p.sub = { ...p.sub, y: -0.02 };
+  return p;
+}
+
+function holdBlend(good, bad, u, f, span) {
+  const k = smooth(Math.min(1, u / span));
+  return blend(good, bad, f * k);
+}
+
+/** Pose for one operation at time t (0..1) and fault (0 good, 1 held). */
 export function frame(station, t, fault = 0) {
   const f = Math.min(1, Math.max(0, fault));
   const u = Math.min(1, Math.max(0, t));
+  if (station === "iqc" || station === "plasma" || station === "diceaoi" || station === "subbake") {
+    const still = {
+      iqc: poseBank,
+      plasma: poseIssued,
+      diceaoi: poseSingulated,
+      subbake: poseSingulated,
+    }[station];
+    return still();
+  }
   if (station === "diebank") {
     const k = smooth(u) * (1 - f);
     return blend(poseBank(), poseIssued(), k);
   }
   if (station === "hbond") {
-    const kGood = smooth(Math.min(1, u / 0.78));
-    const kBad = smooth(Math.min(1, u / 0.36));
-    const k = Math.max(kGood, f * kBad);
-    return blend(poseIssued(), poseBonded(0.42 * f), k);
+    const k = smooth(Math.min(1, u / 0.78));
+    return blend(poseIssued(), poseBonded(0), k);
+  }
+  if (station === "anneal") {
+    const p = poseBonded(0);
+    p.bondGlow = Math.sin(u * Math.PI);
+    return p;
+  }
+  if (station === "overlay") {
+    const bad = poseBonded(0.42);
+    return holdBlend(poseBonded(0), bad, u, f, 0.36);
+  }
+  if (station === "backgrind") {
+    return blend(poseBonded(0), poseThinned(), smooth(u));
+  }
+  if (station === "mount") {
+    return blend(poseThinned(), poseMounted(), smooth(u));
   }
   if (station === "dice") {
     const split = smooth(Math.max(0, (u - 0.45) / 0.55));
-    const pose = blend(poseBonded(0), poseSingulated(), split);
+    const pose = blend(poseMounted(), poseSingulated(), split);
     const kerfX = Math.min(1, smooth(u / 0.48));
     const kerfZ = u < 0.48 ? 0 : smooth((u - 0.48) / 0.42);
     pose.kerfX = kerfX * (1 - split);
@@ -174,16 +251,40 @@ export function frame(station, t, fault = 0) {
   }
   if (station === "wos") {
     const enter = smooth(Math.min(1, u / 0.5));
-    const seat = smooth(Math.min(1, u / 0.75)) * (1 - 0.62 * f);
-    return blend(poseSingulated(), poseWos(f, seat), Math.max(enter, seat));
+    const seat = smooth(Math.min(1, u / 0.75));
+    return blend(poseSingulated(), poseWos(0, seat), Math.max(enter, seat));
   }
-  if (station === "ballpack") {
-    const grow = smooth(Math.min(1, u / 0.55));
-    const capped = Math.min(grow, 0.16);
-    const balls = lerp(grow, capped, f);
-    const trayAmt = (1 - f) * smooth(Math.max(0, (u - 0.5) / 0.5));
-    const voidS = f * smooth(Math.min(1, u / 0.3));
-    return posePacked(balls, trayAmt, voidS);
+  if (station === "underfill") {
+    const good = blend(poseWos(0, 1), poseWet(), smooth(u));
+    const bad = poseWos(0, 1);
+    bad.fillet = 0.12;
+    bad.voidS = 1;
+    bad.balls = 0;
+    bad.trayOp = 0;
+    return blend(good, holdBlend(poseWos(0, 1), bad, u, 1, 0.32), f);
+  }
+  if (station === "ufcure") {
+    return blend(poseWet(), poseUnderfilled(), smooth(u));
+  }
+  if (station === "warpage") {
+    const bent = poseUnderfilled();
+    bent.sub = { ...bent.sub, warp: 1 };
+    bent.stack = { ...bent.stack, y: bent.stack.y + 0.22 };
+    bent.balls = 0;
+    bent.trayOp = 0;
+    return holdBlend(poseUnderfilled(), bent, u, f, 0.4);
+  }
+  if (station === "ball") {
+    return blend(poseUnderfilled(), poseBalled(), smooth(Math.min(1, u / 0.7)));
+  }
+  if (station === "reflow" || station === "fluxclean" || station === "ftest") {
+    return poseBalled();
+  }
+  if (station === "mark") {
+    return blend(poseBalled(), poseMarked(), smooth(u));
+  }
+  if (station === "pack") {
+    return blend(poseMarked(), posePacked(), smooth(u));
   }
   return poseBank();
 }
@@ -231,58 +332,63 @@ function contactorDip(t, fault) {
   return 1 - smooth(Math.min(1, (t - 0.74) / 0.2));
 }
 
-function ballLift(t, fault) {
-  const forced = 0.22;
-  let natural;
-  if (t < 0.08) natural = 0.8;
-  else if (t < 0.42) natural = lerp(0.8, 0.18, smooth((t - 0.08) / 0.34));
-  else if (t < 0.58) natural = lerp(0.18, 0.72, smooth((t - 0.42) / 0.16));
-  else natural = 0.76;
-  return fault * forced + (1 - fault) * natural;
+function ballLift(t) {
+  if (t < 0.08) return 0.8;
+  if (t < 0.42) return lerp(0.8, 0.18, smooth((t - 0.08) / 0.34));
+  if (t < 0.58) return lerp(0.18, 0.72, smooth((t - 0.42) / 0.16));
+  return 0.76;
 }
 
 export function bladeCue(t) {
-  if (t < 0.05) return { x: -1.15, y: 1.05, z: -0.85, axis: "z" };
-  if (t > 0.9) return { x: 1.05, y: 1.2, z: -0.95, axis: "z" };
-  const y = 0.18;
+  if (t < 0.05) return { x: -0.85, y: 0.95, z: -0.55, axis: "z" };
+  if (t > 0.9) return { x: 0.85, y: 1.05, z: -0.55, axis: "z" };
+  const y = 0.22;
   if (t < 0.48) {
-    return { x: lerp(-1.15, 1.15, smooth((t - 0.05) / 0.43)), y, z: 0, axis: "z" };
+    return { x: lerp(-0.85, 0.85, smooth((t - 0.05) / 0.43)), y, z: 0, axis: "z" };
   }
-  return { x: 0, y, z: lerp(-1.05, 1.05, smooth((t - 0.48) / 0.42)), axis: "x" };
+  return { x: 0, y, z: lerp(-0.7, 0.7, smooth((t - 0.48) / 0.42)), axis: "x" };
 }
 
-/** Tool-head and product pose for one frame of a station. */
+/** Tool-head and product pose for one frame of an operation. */
 export function motion(station, t, fault = 0) {
   const u = Math.min(1, Math.max(0, t));
   const f = Math.min(1, Math.max(0, fault));
   const pose = frame(station, u, f);
+  const kind = stationById(station)?.kind || "";
   let aim;
-  if (station === "ballpack") {
+  if (kind === "ball" || kind === "packer" || station === "warpage" || station === "underfill" || station === "ufcure") {
     aim = { x: pose.sub.x, y: 0.2, z: pose.sub.z };
-  } else if (station === "hbond" || station === "wos" || station === "dice") {
+  } else if (station === "hbond" || station === "wos" || station === "dice" || station === "backgrind") {
     aim = worldOf(pose, pose.hbms[3]);
   } else {
     aim = worldOf(pose, pose.logic);
   }
-  let lift = 0.8;
+  let lift = 0.85;
   if (station === "diebank") lift = issueLift(smooth(u) * (1 - f), f);
   else if (station === "hbond") lift = bondLift(u, f);
   else if (station === "wos") lift = wosLift(u, f);
-  else if (station === "ballpack") lift = ballLift(u, f);
-  else lift = 1.1;
+  else if (station === "ball") lift = ballLift(u);
+  else if (kind === "inspect" || kind === "metrology") lift = 0.72 + Math.sin(u * Math.PI) * 0.08;
   pose.alarm = f;
   const head = { x: aim.x, y: aim.y + lift, z: aim.z };
-  const lamp = station === "ballpack" && f < 0.5 ? smooth(Math.max(0, 1 - Math.abs(u - 0.5) / 0.12)) : 0;
-  const pusher = station === "wos" ? smooth(Math.min(1, u / 0.42)) : 0;
+  const lamp = (station === "plasma" || station === "anneal" || station === "reflow" || station === "ufcure" || station === "subbake")
+    ? Math.sin(Math.min(1, u) * Math.PI)
+    : (station === "ftest" && f < 0.5 ? smooth(Math.max(0, 1 - Math.abs(u - 0.62) / 0.12)) : 0);
+  const pusher = station === "wos" || station === "pack" ? smooth(Math.min(1, u / 0.42)) : 0;
   const table = station === "dice" ? bladeCue(u).x : 0;
-  const contactor = station === "ballpack" ? contactorDip(u, f) : 0;
-  return { pose, head, blade: bladeCue(u), lamp, pusher, table, contactor };
+  const contactor = station === "ftest" ? contactorDip(u, f) : 0;
+  const sweep = (kind === "inspect" || kind === "metrology") ? Math.sin(u * Math.PI * 2) : 0;
+  const door = (kind === "oven" || kind === "plasma" || kind === "clean") ? Math.sin(Math.min(1, u) * Math.PI) : 0;
+  const needle = station === "underfill" ? (f > 0.5 ? 0.35 : (u > 0.2 && u < 0.75 ? smooth((u - 0.2) / 0.2) : 0)) : 0;
+  const wheel = station === "backgrind" ? (u > 0.15 && u < 0.8 ? smooth((u - 0.15) / 0.2) : 0) : 0;
+  const laser = station === "mark" ? (u > 0.25 && u < 0.8 ? 1 : 0) : 0;
+  return { pose, head, blade: bladeCue(u), lamp, pusher, table, contactor, sweep, door, needle, wheel, laser };
 }
 
 export function specForMorph(morph) {
-  if (morph === "bank" || !morph) return { station: "diebank", t: 0, fault: 0 };
-  const st = STATIONS.find((s) => s.morphOut === morph);
-  if (!st) return { station: "diebank", t: 0, fault: 0 };
+  if (morph === "bank" || !morph) return { station: "iqc", t: 0, fault: 0 };
+  const st = FLOW.find((s) => s.morphOut === morph && s.morphIn !== s.morphOut);
+  if (!st) return { station: "iqc", t: 0, fault: 0 };
   return { station: st.id, t: 1, fault: 0 };
 }
 

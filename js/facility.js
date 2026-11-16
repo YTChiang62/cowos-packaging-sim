@@ -40,13 +40,14 @@ export class Facility {
   }
 
   /**
-   * Issue and dispatch everything DOCK_REQUIREMENTS names for this station.
-   * A KGD shortage refuses the whole approach: nothing is reserved and the
-   * crane is not asked to pick up a carrier.
+   * Issue and dispatch everything DOCK_REQUIREMENTS names for this operation.
+   * A KGD shortage refuses the whole approach: the missing tray is not
+   * reserved, and the crane is not asked to pick up a carrier that was
+   * never issued.
    */
   beginApproach(stationId) {
     if (this.holdOpen) return { ok: false, reason: "hold" };
-    const reqs = DOCK_REQUIREMENTS[stationId] || [];
+    const reqs = this._activeReqs(stationId);
     const reserved = [];
     const staged = [];
     for (const req of reqs) {
@@ -86,11 +87,22 @@ export class Facility {
           port: req.port,
         });
         staged.push(this._stageIssue(issued.carrier, req.port));
+      } else if (req.role === "follow") {
+        const carrier = this._named(req.sku);
+        if (!carrier || carrier.type !== req.type) {
+          for (const id of reserved) this.wh.unreserve(id);
+          this.gate = [];
+          this.lastRefusal = carrier ? "type_mismatch" : "no_lot_carrier";
+          return { ok: false, reason: this.lastRefusal };
+        }
+        staged.push(this._stageTravel(carrier, req.port));
       } else {
         const carrier = this.wh.get(this.lotCarrierId);
         if (!carrier || carrier.type !== req.type) {
-          this.lastRefusal = "type_mismatch";
-          return { ok: false, reason: carrier ? "type_mismatch" : "no_lot_carrier" };
+          for (const id of reserved) this.wh.unreserve(id);
+          this.gate = [];
+          this.lastRefusal = carrier ? "type_mismatch" : "no_lot_carrier";
+          return { ok: false, reason: this.lastRefusal };
         }
         staged.push(this._stageTravel(carrier, req.port));
       }
@@ -117,15 +129,18 @@ export class Facility {
   }
 
   readyForProcess(stationId) {
-    const reqs = DOCK_REQUIREMENTS[stationId] || [];
-    return reqs.every((req) => this._satisfied(req));
+    return this._activeReqs(stationId).every((req) => this._satisfied(req));
   }
 
-  /** Job-out: carrier waits at the load port. Nothing is sent to the next tool. */
+  /**
+   * Job-out: the traveling carrier waits at the load port. Nothing is sent
+   * to the next tool. Mount and WoS are the only carrier conversions.
+   */
   presentOutput(stationId) {
     const present = OUTPUT_PRESENT[stationId];
+    if (!present) return;
     const tool = stationById(stationId).tool;
-    if (stationId === "diebank") {
+    if (present.markKgd) {
       const lot = this.wh.get(this.lotCarrierId);
       if (lot) this._toPort(lot, present.port);
       for (const carrier of this.wh.carriers) {
@@ -136,71 +151,66 @@ export class Facility {
       }
       return;
     }
-    if (stationId === "hbond") {
-      const foup = this.wh.get(this.lotCarrierId);
-      if (foup) {
-        foup.lotId = null;
-        foup._return = true;
-        this._toPort(foup, "HB-21");
-        this._enqueue(foup, "io:INT", "return");
-      }
-      const frame = this.wh.addCarrier({
-        id: `FR-${this.lotId}`,
-        zone: null,
-        type: "FRAME",
-        sku: "cow",
-        lotId: this.lotId,
-        qty: 1,
-        status: "reserved",
-        location: `port:${present.port}`,
-        home: null,
-      });
-      this.lotCarrierId = frame.id;
-      return;
-    }
-    if (stationId === "dice") {
-      const frame = this.wh.get(this.lotCarrierId);
-      if (frame) this._toPort(frame, present.port);
-      return;
-    }
-    if (stationId === "wos") {
-      const frame = this.wh.get(this.lotCarrierId);
-      if (frame) {
-        frame.lotId = null;
-        frame.sku = "frame-empty";
-        frame.status = "stock";
-        frame.location = "port:WOS-04:unit";
-      }
+    if (present.keepLot) {
       for (const carrier of this.wh.carriers) {
-        if (carrier.sku === "substrate" && (carrier.location === `tool:${tool}` || carrier.location === "port:WOS-04")) {
-          carrier.lotId = null;
-          carrier._return = true;
-          this._toPort(carrier, "WOS-04");
-          this._enqueue(carrier, "io:SUB", "return");
-        }
+        const here = carrier.location === `tool:${tool}` || carrier.location === `port:${present.port}`;
+        if (here && carrier.sku === present.sku) this._toPort(carrier, present.port);
       }
-      const tray = this.wh.addCarrier({
-        id: `JD-${this.lotId}`,
-        zone: null,
-        type: "TRAY",
-        sku: "wip-tray",
-        lotId: this.lotId,
-        qty: 1,
-        status: "reserved",
-        location: `port:${present.port}`,
-        home: null,
-      });
-      this.lotCarrierId = tray.id;
       return;
     }
-    if (stationId === "ballpack") {
-      const tray = this.wh.get(this.lotCarrierId);
-      if (!tray) return;
-      tray.sku = "finished";
-      tray.qty = 1;
-      tray.zone = "FG";
-      this._toPort(tray, present.port);
+    if (present.convertFrom) {
+      const lot = this.wh.get(this.lotCarrierId);
+      if (lot && lot.type === present.convertFrom) {
+        if (present.returnZone) {
+          lot.lotId = null;
+          lot._return = true;
+          const src = this._portFor(tool, lot.type) || present.port;
+          this._toPort(lot, src);
+          this._enqueue(lot, `io:${present.returnZone}`, "return");
+        }
+        if (present.returnSku && present.returnZone) {
+          for (const carrier of this.wh.carriers) {
+            const here = carrier.location === `tool:${tool}` || String(carrier.location).startsWith(`port:${tool}`);
+            if (carrier.sku === present.returnSku && here) {
+              carrier.lotId = null;
+              carrier._return = true;
+              const src = this._portFor(tool, carrier.type);
+              if (src) this._toPort(carrier, src);
+              this._enqueue(carrier, `io:${present.returnZone}`, "return");
+            }
+          }
+        }
+        if (present.retireFrame) {
+          lot.lotId = null;
+          lot.sku = "frame-empty";
+          lot.status = "stock";
+          lot.location = `port:${present.framePort}`;
+        }
+        const next = this.wh.addCarrier({
+          id: `${present.idPrefix}${this.lotId}`,
+          zone: null,
+          type: present.type,
+          sku: present.newSku,
+          lotId: this.lotId,
+          qty: 1,
+          status: "reserved",
+          location: `port:${present.port}`,
+          home: null,
+        });
+        this.lotCarrierId = next.id;
+        return;
+      }
+      if (lot) this._toPort(lot, present.port);
+      return;
     }
+    const lot = this.wh.get(this.lotCarrierId);
+    if (!lot) return;
+    if (present.sku === "finished") {
+      lot.sku = "finished";
+      lot.qty = 1;
+      lot.zone = "FG";
+    }
+    this._toPort(lot, present.port);
   }
 
   beginPutaway() {
@@ -213,7 +223,10 @@ export class Facility {
       this.gate = [];
       return { ok: true, done: true };
     }
-    if (String(carrier.location).startsWith("tool:")) this._toPort(carrier, "BPK-05");
+    if (String(carrier.location).startsWith("tool:")) {
+      const port = this._portFor(carrier.location.slice(5), carrier.type) || "PCK-56";
+      this._toPort(carrier, port);
+    }
     const move = this._enqueue(carrier, PUTAWAY.port, "putaway");
     this._instant = false;
     this.gate = [move.id];
@@ -352,13 +365,33 @@ export class Facility {
     };
   }
 
+  _lotType() {
+    return this.wh.get(this.lotCarrierId)?.type || null;
+  }
+
+  _activeReqs(stationId) {
+    const lotType = this._lotType();
+    return (DOCK_REQUIREMENTS[stationId] || []).filter((req) => {
+      if (req.unlessLot && req.unlessLot === lotType) return false;
+      if (req.onlyLot && req.onlyLot !== lotType) return false;
+      return true;
+    });
+  }
+
+  _named(sku) {
+    return this.wh.carriers.find((c) => c.sku === sku && c.lotId === this.lotId)
+      || this.wh.carriers.find((c) => c.sku === sku && (c.status === "reserved" || c.status === "transit"))
+      || null;
+  }
+
   _satisfied(req) {
     const tool = PORTS[req.port]?.tool;
     if (!tool) return false;
     return this.wh.carriers.some((carrier) => {
       if (carrier.location !== `tool:${tool}` || carrier.type !== req.type) return false;
       if (req.role === "travel") return carrier.id === this.lotCarrierId;
-      return carrier.sku === req.sku;
+      if (req.role === "follow") return carrier.sku === req.sku;
+      return carrier.sku === req.sku || (req.sku === "kgd" && carrier.sku === "kgd-issued");
     });
   }
 

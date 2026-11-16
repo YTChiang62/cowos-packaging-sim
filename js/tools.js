@@ -8,45 +8,65 @@ const COPPER = mat(0xb8874e, { roughness: 0.32, metalness: 0.7 });
 const CERAMIC = mat(0xe7e2d6, { roughness: 0.45, metalness: 0.08 });
 const GLASS = mat(0x7fdad0, { roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.28 });
 
+const ACCENT = {
+  inspect: 0x9fd4ff,
+  diebank: 0xd3925a,
+  plasma: 0xb388ff,
+  bonder: 0x3ee0c0,
+  oven: 0xe08a4a,
+  metrology: 0xd7e7ff,
+  grinder: 0x7ec8e0,
+  mounter: 0x8eb4ff,
+  dicer: 0x8eb4ff,
+  wos: 0xe0a15a,
+  dispense: 0xc48a5a,
+  ball: 0xf0d48a,
+  clean: 0x5ec8d8,
+  handler: 0x5ee0c8,
+  marker: 0xff6b7a,
+  packer: 0xd7c4a0,
+};
+
+const OVEN_GLOW = {
+  anneal: 0xe08a3a,
+  subbake: 0xc47a32,
+  ufcure: 0x3ec8a0,
+  reflow: 0xff5a3a,
+};
+
 function stackLight(parent, x, y, z) {
   const g = new THREE.Group();
   g.position.set(x, y, z);
-  cyl(g, 0.035, 0.035, 0.55, DARK, 0, 0.28, 0);
-  const red = cyl(g, 0.08, 0.08, 0.11, mat(0x3a181c, { emissive: 0xff6b7a, emissiveIntensity: 0.05, roughness: 0.4 }), 0, 0.64, 0);
-  const yel = cyl(g, 0.08, 0.08, 0.11, mat(0x3a3014, { emissive: 0xf0c14b, emissiveIntensity: 0.05, roughness: 0.4 }), 0, 0.76, 0);
-  const grn = cyl(g, 0.08, 0.08, 0.11, mat(0x143028, { emissive: 0x3ee0c0, emissiveIntensity: 0.05, roughness: 0.4 }), 0, 0.88, 0);
+  cyl(g, 0.03, 0.03, 0.42, DARK, 0, 0.22, 0);
+  const red = cyl(g, 0.06, 0.06, 0.08, mat(0x3a181c, { emissive: 0xff6b7a, emissiveIntensity: 0.05 }), 0, 0.48, 0);
+  const yel = cyl(g, 0.06, 0.06, 0.08, mat(0x3a3014, { emissive: 0xf0c14b, emissiveIntensity: 0.05 }), 0, 0.58, 0);
+  const grn = cyl(g, 0.06, 0.06, 0.08, mat(0x143028, { emissive: 0x3ee0c0, emissiveIntensity: 0.05 }), 0, 0.68, 0);
   parent.add(g);
   return { red: red.material, yel: yel.material, grn: grn.material };
 }
 
-function gantry(chuck, spanZ = 2.0) {
-  const posts = [
-    [-1.72, -0.95],
-    [1.72, -0.95],
-    [-1.72, 0.95],
-    [1.72, 0.95],
-  ];
-  for (const [x, z] of posts) cyl(chuck, 0.045, 0.05, 1.7, STEEL, x, 0.85, z);
-  box(chuck, 3.55, 0.08, 0.1, COPPER, 0, 1.68, 0);
-  box(chuck, 0.1, 0.08, spanZ, COPPER, -1.72, 1.68, 0);
-  box(chuck, 0.1, 0.08, spanZ, COPPER, 1.72, 1.68, 0);
+function gantry(chuck) {
+  for (const x of [-1.02, 1.02]) {
+    for (const z of [-0.48, 0.48]) cyl(chuck, 0.03, 0.035, 1.05, STEEL, x, 0.52, z);
+  }
+  box(chuck, 2.15, 0.055, 0.06, COPPER, 0, 1.05, 0);
 }
 
 function loadPort(group, parts, accent) {
   const port = new THREE.Group();
-  port.position.set(0, 0, 2.4);
-  box(port, 1.55, 0.14, 1.05, DARK, 0, 0.72, 0);
-  box(port, 0.09, 1.25, 0.09, STEEL, -0.7, 1.35, 0.08);
-  box(port, 0.09, 1.25, 0.09, STEEL, 0.7, 1.35, 0.08);
-  box(port, 1.5, 0.09, 0.09, STEEL, 0, 1.95, 0.08);
-  const doorMat = mat(accent, { roughness: 0.18, metalness: 0.25, transparent: true, opacity: 0.38 });
-  const door = box(port, 1.15, 1.02, 0.05, doorMat, 0, 1.38, 0.16);
-  const padMat = mat(0x10241f, { emissive: accent, emissiveIntensity: 0.12, roughness: 0.45, metalness: 0.2 });
-  box(port, 0.78, 0.045, 0.62, padMat, 0, 0.84, 0);
-  box(port, 0.16, 0.08, 0.08, mat(accent, { emissive: accent, emissiveIntensity: 0.4, roughness: 0.3 }), 0.78, 1.15, 0.2);
+  port.position.set(0, 0, 1.55);
+  box(port, 1.15, 0.1, 0.72, DARK, 0, 0.55, 0);
+  box(port, 0.06, 0.85, 0.06, STEEL, -0.5, 0.95, 0.04);
+  box(port, 0.06, 0.85, 0.06, STEEL, 0.5, 0.95, 0.04);
+  box(port, 1.1, 0.06, 0.06, STEEL, 0, 1.35, 0.04);
+  const door = box(port, 0.82, 0.7, 0.04, mat(accent, {
+    roughness: 0.18, metalness: 0.25, transparent: true, opacity: 0.38,
+  }), 0, 0.95, 0.1);
+  const padMat = mat(0x10241f, { emissive: accent, emissiveIntensity: 0.12, roughness: 0.45 });
+  box(port, 0.55, 0.035, 0.42, padMat, 0, 0.64, 0);
   group.add(port);
   const anchor = new THREE.Object3D();
-  anchor.position.set(0, 0.96, 2.4);
+  anchor.position.set(0, 0.72, 1.55);
   group.add(anchor);
   parts.door = door;
   parts.pad = padMat;
@@ -54,7 +74,7 @@ function loadPort(group, parts, accent) {
 }
 
 function quill(head) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.055, 1, 0.055), STEEL);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.045, 1, 0.045), STEEL);
   mesh.geometry.translate(0, 0.5, 0);
   mesh.castShadow = true;
   head.add(mesh);
@@ -63,43 +83,42 @@ function quill(head) {
 
 function makeHead(kind) {
   const g = new THREE.Group();
-  if (kind === "diebank") {
-    cyl(g, 0.07, 0.045, 0.2, STEEL, 0, 0.12, 0);
-    cyl(g, 0.025, 0.025, 0.07, DARK, 0, 0.01, 0);
-    box(g, 0.16, 0.05, 0.16, CERAMIC, 0, 0.22, 0);
+  if (kind === "diebank" || kind === "inspect" || kind === "metrology") {
+    cyl(g, 0.06, 0.04, 0.16, STEEL, 0, 0.1, 0);
+    cyl(g, 0.09, 0.09, 0.06, mat(0x16302e, { emissive: 0x9fd4ff, emissiveIntensity: 0.45 }), 0, 0.02, 0);
   } else if (kind === "bonder" || kind === "wos") {
-    box(g, 0.5, 0.14, 0.42, CERAMIC, 0, 0.16, 0);
-    box(g, 0.3, 0.05, 0.26, COPPER, 0, 0.06, 0);
-    cyl(g, 0.05, 0.05, 0.16, STEEL, 0, 0.28, 0);
-    box(g, 0.18, 0.04, 0.04, mat(0x222a30, { roughness: 0.4, metalness: 0.4 }), 0.22, 0.2, 0.16);
-  } else if (kind === "ballpack") {
-    box(g, 1.02, 0.1, 0.9, STEEL, 0, 0.12, 0);
-    box(g, 0.7, 0.04, 0.7, COPPER, 0, 0.04, 0);
-    const bump = mat(0xf2d48a, { metalness: 0.8, roughness: 0.2 });
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 4; c++) {
-        const s = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), bump);
-        s.position.set(-0.24 + c * 0.16, 0.02, -0.24 + r * 0.16);
-        g.add(s);
-      }
-    }
+    box(g, 0.42, 0.12, 0.34, CERAMIC, 0, 0.14, 0);
+    box(g, 0.26, 0.04, 0.2, COPPER, 0, 0.05, 0);
+  } else if (kind === "ball" || kind === "dispense") {
+    box(g, 0.7, 0.08, 0.55, STEEL, 0, 0.1, 0);
+    if (kind === "dispense") cyl(g, 0.02, 0.008, 0.28, STEEL, 0.18, -0.08, 0);
+  } else if (kind === "marker") {
+    box(g, 0.28, 0.1, 0.2, DARK, 0, 0.12, 0);
+    cyl(g, 0.04, 0.02, 0.16, mat(0xff6b7a, { emissive: 0xff6b7a, emissiveIntensity: 0.6 }), 0, 0.02, 0);
   }
   const q = quill(g);
   g.userData.quill = q;
   return g;
 }
 
-function stagePlate(chuck) {
-  box(chuck, 2.7, 0.05, 1.9, DARK, 0, 0.02, 0);
+function addHead(chuck, parts, kind) {
+  gantry(chuck);
+  const head = makeHead(kind);
+  chuck.add(head);
+  parts.head = head;
+  parts.quill = head.userData.quill;
 }
 
-const ACCENT = {
-  diebank: 0xd3925a,
-  bonder: 0x3ee0c0,
-  dicer: 0x8eb4ff,
-  wos: 0xe0a15a,
-  ballpack: 0xf0d48a,
-};
+function ovenBody(group, chuck, parts, glow) {
+  const shell = mat(0x1a1410, { roughness: 0.4, metalness: 0.45 });
+  box(group, 1.7, 1.35, 1.15, shell, 0.05, 1.05, -0.25);
+  const win = mat(glow, { emissive: glow, emissiveIntensity: 0.35, roughness: 0.2, transparent: true, opacity: 0.55 });
+  box(group, 0.7, 0.42, 0.04, win, 0.05, 1.15, 0.34);
+  parts.glow = win;
+  const door = box(group, 1.15, 0.72, 0.05, mat(0x2a2118, { roughness: 0.45, metalness: 0.4 }), 0.05, 0.7, 0.4);
+  parts.ovenDoor = door;
+  box(chuck, 1.15, 0.05, 0.8, mat(glow, { emissive: glow, emissiveIntensity: 0.25, roughness: 0.35 }), 0, 0.06, 0);
+}
 
 export function buildTool(station) {
   const group = new THREE.Group();
@@ -109,154 +128,205 @@ export function buildTool(station) {
 
   const kind = station.kind;
   const accentHex = ACCENT[kind] || 0xd3925a;
-  const accent = mat(accentHex, { emissive: accentHex, emissiveIntensity: 0.18, roughness: 0.35, metalness: 0.45 });
+  const accent = mat(accentHex, { emissive: accentHex, emissiveIntensity: 0.16, roughness: 0.35, metalness: 0.45 });
 
-  box(group, 5.1, 0.28, 4.3, DARK, 0, 0.14, -0.15);
-  box(group, 5.05, 0.06, 0.1, accent, 0, 0.3, 1.95);
+  box(group, 2.7, 0.2, 2.35, DARK, 0, 0.1, -0.08);
+  box(group, 2.64, 0.04, 0.05, accent, 0, 0.22, 1.02);
 
   const chuck = new THREE.Group();
-  chuck.position.set(0.05, 1.02, 0.15);
+  chuck.position.set(0, 0.72, -0.05);
   group.add(chuck);
-  stagePlate(chuck);
+  box(chuck, 1.7, 0.04, 1.15, DARK, 0, 0.02, 0);
 
   const parts = {
     head: null, quill: null, spindle: null, spinner: null, blade: null,
     lamp: null, pusher: null, cards: null, door: null, pad: null,
-    table: null, contactor: null, optics: null,
+    table: null, contactor: null, optics: null, glow: null, sweep: null,
+    wheel: null, needle: null, laser: null, ovenDoor: null, roll: null,
   };
   const load = loadPort(group, parts, accentHex);
 
   if (kind === "diebank") {
-    box(group, 3.3, 2.55, 1.15, mat(0x2a2118, { roughness: 0.5, metalness: 0.35 }), -0.15, 1.55, -1.25);
+    box(group, 1.55, 1.7, 0.55, mat(0x2a2118, { roughness: 0.5, metalness: 0.35 }), -0.15, 1.15, -0.72);
     for (let i = 0; i < 4; i++) {
-      const y = 0.62 + i * 0.48;
-      box(group, 2.7, 0.05, 0.9, DARK, -0.15, y, -1.2);
-      box(group, 2.45, 0.07, 0.72, mat(0xc4894e, { roughness: 0.55, metalness: 0.25 }), -0.15, y + 0.08, -1.18);
-      for (let c = 0; c < 5; c++) {
-        box(group, 0.28, 0.02, 0.22, mat(0x1a140e, { roughness: 0.7 }), -1.05 + c * 0.46, y + 0.14, -1.18);
-      }
+      const y = 0.55 + i * 0.32;
+      box(group, 1.3, 0.035, 0.4, DARK, -0.15, y, -0.7);
+      box(group, 1.15, 0.045, 0.32, mat(0xc4894e, { roughness: 0.55, metalness: 0.25 }), -0.15, y + 0.05, -0.68);
     }
-    gantry(chuck);
-    cyl(chuck, 0.16, 0.2, 0.12, STEEL, 0.85, 0.95, 0.35);
-    const head = makeHead("diebank");
-    chuck.add(head);
-    parts.head = head;
-    parts.quill = head.userData.quill;
-  } else if (kind === "bonder") {
-    const chamber = cyl(group, 1.35, 1.35, 0.85, mat(0x10211f, { roughness: 0.32, metalness: 0.62 }), 0.1, 1.35, -0.55, 36);
-    chamber.scale.y = 0.55;
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.045, 8, 40), accent);
+    addHead(chuck, parts, "diebank");
+  } else if (kind === "inspect") {
+    box(group, 1.35, 0.9, 0.7, mat(0x141820, { roughness: 0.4, metalness: 0.5 }), 0, 1.15, -0.35);
+    const sweep = new THREE.Group();
+    cyl(sweep, 0.12, 0.08, 0.28, STEEL, 0, 0.7, 0);
+    cyl(sweep, 0.16, 0.16, 0.08, mat(0x163044, { emissive: 0x9fd4ff, emissiveIntensity: 0.7 }), 0, 0.52, 0);
+    chuck.add(sweep);
+    parts.sweep = sweep;
+    box(chuck, 1.2, 0.025, 0.7, mat(0x9fd4ff, { emissive: 0x2a6a88, emissiveIntensity: 0.25 }), 0, 0.05, 0);
+  } else if (kind === "plasma") {
+    const glow = mat(0xb388ff, { emissive: 0x6a3ad0, emissiveIntensity: 0.45, roughness: 0.2, transparent: true, opacity: 0.72 });
+    const chamber = cyl(group, 0.62, 0.62, 0.7, glow, 0.05, 1.15, -0.25, 28);
+    chamber.scale.y = 0.85;
+    parts.glow = glow;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.03, 8, 28), accent);
     ring.rotation.x = Math.PI / 2;
-    ring.position.set(0.1, 1.15, -0.35);
+    ring.position.set(0.05, 0.85, -0.25);
     group.add(ring);
-    gantry(chuck);
-    const groove = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.035, 8, 36), COPPER);
-    groove.rotation.x = Math.PI / 2;
-    groove.position.y = 0.06;
-    chuck.add(groove);
+    const door = box(group, 0.7, 0.55, 0.04, mat(0x241838, { roughness: 0.35, metalness: 0.4 }), 0.05, 0.85, 0.15);
+    parts.ovenDoor = door;
+  } else if (kind === "bonder") {
+    cyl(group, 0.72, 0.72, 0.42, mat(0x10211f, { roughness: 0.32, metalness: 0.62 }), 0.05, 1.05, -0.35, 28);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.03, 8, 28), accent);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0.05, 0.9, -0.2);
+    group.add(ring);
+    addHead(chuck, parts, "bonder");
     const optics = new THREE.Group();
-    cyl(optics, 0.07, 0.05, 0.42, STEEL, -0.55, 0.95, -0.15);
-    cyl(optics, 0.07, 0.05, 0.42, STEEL, 0.55, 0.95, -0.15);
-    cyl(optics, 0.1, 0.1, 0.12, mat(0x16302e, { emissive: 0x3ee0c0, emissiveIntensity: 0.7 }), -0.55, 0.7, 0.05);
-    cyl(optics, 0.1, 0.1, 0.12, mat(0x16302e, { emissive: 0x3ee0c0, emissiveIntensity: 0.7 }), 0.55, 0.7, 0.05);
+    cyl(optics, 0.05, 0.04, 0.28, STEEL, -0.38, 0.7, 0);
+    cyl(optics, 0.05, 0.04, 0.28, STEEL, 0.38, 0.7, 0);
     chuck.add(optics);
     parts.optics = optics;
-    const head = makeHead("bonder");
-    chuck.add(head);
-    parts.head = head;
-    parts.quill = head.userData.quill;
-    box(group, 0.85, 1.7, 0.62, BODY, 1.9, 1.2, -0.55);
+  } else if (kind === "oven") {
+    ovenBody(group, chuck, parts, OVEN_GLOW[station.id] || 0xe08a3a);
+  } else if (kind === "metrology") {
+    box(group, 0.7, 1.45, 0.55, mat(0xe7eef2, { roughness: 0.35, metalness: 0.25 }), 0.55, 1.15, -0.35);
+    cyl(group, 0.1, 0.14, 0.35, STEEL, 0.55, 0.55, -0.05);
+    const sweep = new THREE.Group();
+    box(sweep, 0.55, 0.08, 0.18, mat(0xd7e7ff, { emissive: 0x8ab4e0, emissiveIntensity: 0.35 }), 0, 0.85, 0);
+    cyl(sweep, 0.08, 0.05, 0.2, STEEL, 0, 0.7, 0);
+    chuck.add(sweep);
+    parts.sweep = sweep;
+    box(chuck, 0.9, 0.03, 0.7, mat(0x1a2428, { roughness: 0.4, metalness: 0.4 }), -0.15, 0.05, 0);
+  } else if (kind === "grinder") {
+    box(group, 1.5, 0.7, 0.45, BODY, 0, 1.15, -0.7);
+    const wheel = new THREE.Group();
+    const spinner = new THREE.Group();
+    wheel.add(spinner);
+    const disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.42, 0.08, 28),
+      mat(0xd5dde4, { metalness: 0.85, roughness: 0.18 })
+    );
+    disc.rotation.z = Math.PI / 2;
+    spinner.add(disc);
+    cyl(wheel, 0.06, 0.06, 0.4, STEEL, 0, 0.35, 0);
+    chuck.add(wheel);
+    parts.wheel = wheel;
+    parts.spinner = spinner;
+  } else if (kind === "mounter") {
+    const roll = new THREE.Group();
+    cyl(roll, 0.28, 0.28, 0.55, mat(0x2a4d8a, { roughness: 0.45, metalness: 0.15 }), 0, 0, 0, 20);
+    roll.rotation.z = Math.PI / 2;
+    roll.position.set(-0.85, 0.85, -0.15);
+    chuck.add(roll);
+    parts.roll = roll;
+    parts.spinner = roll;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.03, 8, 28), STEEL);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.08;
+    chuck.add(ring);
+    box(chuck, 0.9, 0.02, 0.9, mat(0x2a4d8a, { transparent: true, opacity: 0.65, roughness: 0.5 }), 0.15, 0.05, 0);
   } else if (kind === "dicer") {
-    box(group, 3.4, 1.7, 0.35, mat(0x16182a, { roughness: 0.4, metalness: 0.5 }), 0, 1.7, -1.35);
+    box(group, 1.7, 1.05, 0.22, mat(0x16182a, { roughness: 0.4, metalness: 0.5 }), 0, 1.25, -0.85);
     const table = new THREE.Group();
     chuck.add(table);
-    box(table, 2.15, 0.1, 2.05, mat(0x12151c, { roughness: 0.45, metalness: 0.45 }), 0, 0.08, 0);
-    box(table, 2.2, 0.05, 0.04, mat(0x9ec4ff, { emissive: 0x6aa0ff, emissiveIntensity: 0.35 }), 0, 0.14, 0);
-    box(table, 0.04, 0.05, 2.05, mat(0x9ec4ff, { emissive: 0x6aa0ff, emissiveIntensity: 0.35 }), 0, 0.14, 0);
+    box(table, 1.35, 0.07, 1.15, mat(0x12151c, { roughness: 0.45, metalness: 0.45 }), 0, 0.06, 0);
+    box(table, 1.3, 0.03, 0.025, mat(0x9ec4ff, { emissive: 0x6aa0ff, emissiveIntensity: 0.35 }), 0, 0.1, 0);
     parts.table = table;
-    box(chuck, 2.7, 0.08, 0.08, COPPER, 0, 1.35, -1.05);
     const spindle = new THREE.Group();
     chuck.add(spindle);
-    cyl(spindle, 0.18, 0.18, 0.32, BODY, 0, 0.32, 0);
-    cyl(spindle, 0.07, 0.07, 0.22, STEEL, 0, 0.12, 0);
+    cyl(spindle, 0.12, 0.12, 0.22, BODY, 0, 0.22, 0);
     const spinner = new THREE.Group();
     spindle.add(spinner);
     const blade = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.48, 0.48, 0.025, 32),
-      mat(0xf7fbff, { metalness: 0.92, roughness: 0.1, emissive: 0xc5d8ee, emissiveIntensity: 0.45 })
+      new THREE.CylinderGeometry(0.32, 0.32, 0.018, 28),
+      mat(0xf7fbff, { metalness: 0.92, roughness: 0.1, emissive: 0xc5d8ee, emissiveIntensity: 0.4 })
     );
     blade.castShadow = true;
     spinner.add(blade);
     parts.spindle = spindle;
     parts.spinner = spinner;
     parts.blade = blade;
-    cyl(chuck, 0.035, 0.02, 0.4, mat(0x9fd4ff, { emissive: 0x2a6a88, emissiveIntensity: 0.5 }), 1.15, 0.45, 0.2);
   } else if (kind === "wos") {
-    gantry(chuck);
+    addHead(chuck, parts, "wos");
     const mag = new THREE.Group();
-    mag.position.set(-2.05, 0, -0.35);
-    box(mag, 0.78, 2.35, 0.7, mat(0x2c2418, { roughness: 0.45, metalness: 0.4 }), 0, 1.3, 0);
+    mag.position.set(-0.95, 0, -0.25);
+    box(mag, 0.42, 1.35, 0.38, mat(0x2c2418, { roughness: 0.45, metalness: 0.4 }), 0, 0.85, 0);
     parts.cards = new THREE.Group();
-    for (let i = 0; i < 7; i++) {
-      box(parts.cards, 0.66, 0.04, 0.52, mat(0xd3925a, { roughness: 0.38, metalness: 0.5 }), 0.06, 0.4 + i * 0.24, 0);
-    }
+    for (let i = 0; i < 5; i++) box(parts.cards, 0.32, 0.025, 0.26, mat(0xd3925a, { roughness: 0.38, metalness: 0.5 }), 0.04, 0.35 + i * 0.16, 0);
     mag.add(parts.cards);
     group.add(mag);
     const hot = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.82, 0.82, 0.07, 32),
+      new THREE.CylinderGeometry(0.42, 0.42, 0.05, 24),
       mat(0xc47a3a, { emissive: 0x8a3e12, emissiveIntensity: 0.35, metalness: 0.6, roughness: 0.3 })
     );
-    hot.position.y = 0.07;
+    hot.position.y = 0.06;
     chuck.add(hot);
     const pusher = new THREE.Group();
-    box(pusher, 0.55, 0.07, 0.1, STEEL, 0, 0.2, 0);
-    box(pusher, 0.1, 0.12, 0.22, CERAMIC, 0.22, 0.2, 0);
+    box(pusher, 0.32, 0.05, 0.08, STEEL, 0, 0.16, 0);
     chuck.add(pusher);
     parts.pusher = pusher;
-    const head = makeHead("wos");
-    chuck.add(head);
-    parts.head = head;
-    parts.quill = head.userData.quill;
-  } else if (kind === "ballpack") {
-    box(group, 3.6, 0.1, 1.15, DARK, 0.2, 0.55, 0.85);
-    box(group, 3.4, 0.06, 0.08, COPPER, 0.2, 0.66, 0.45);
-    box(group, 3.4, 0.06, 0.08, COPPER, 0.2, 0.66, 1.25);
-    gantry(chuck);
-    const head = makeHead("ballpack");
-    chuck.add(head);
-    parts.head = head;
-    parts.quill = head.userData.quill;
+  } else if (kind === "dispense") {
+    addHead(chuck, parts, "dispense");
+    const needle = new THREE.Group();
+    cyl(needle, 0.035, 0.012, 0.42, STEEL, 0, 0.2, 0);
+    cyl(needle, 0.09, 0.07, 0.22, mat(0xc48a5a, { roughness: 0.4, metalness: 0.3 }), 0, 0.48, 0);
+    chuck.add(needle);
+    parts.needle = needle;
+  } else if (kind === "ball") {
+    addHead(chuck, parts, "ball");
+    const bump = mat(0xf2d48a, { metalness: 0.8, roughness: 0.2 });
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), bump);
+        s.position.set(-0.12 + c * 0.12, 0.08, -0.12 + r * 0.12);
+        if (parts.head) parts.head.add(s);
+      }
+    }
+  } else if (kind === "clean") {
+    box(group, 1.45, 0.55, 0.9, mat(0x143038, { roughness: 0.25, metalness: 0.35 }), 0, 0.7, -0.15);
+    const bath = box(group, 1.15, 0.08, 0.62, mat(0x5ec8d8, {
+      emissive: 0x1a6a78, emissiveIntensity: 0.4, transparent: true, opacity: 0.65, roughness: 0.1,
+    }), 0, 0.95, -0.15);
+    parts.glow = bath.material;
+    const door = box(group, 1.2, 0.4, 0.04, GLASS, 0, 1.15, 0.32);
+    parts.ovenDoor = door;
+  } else if (kind === "handler") {
+    box(group, 1.15, 0.7, 0.7, mat(0x142420, { roughness: 0.4, metalness: 0.45 }), 0.15, 1.05, -0.2);
     const contactor = new THREE.Group();
-    box(contactor, 0.7, 0.28, 0.55, mat(0x241c14, { roughness: 0.4, metalness: 0.45 }), 0.85, 1.15, -0.15);
-    box(contactor, 0.5, 0.06, 0.38, mat(0xf0d48a, { emissive: 0xc4922a, emissiveIntensity: 0.35, metalness: 0.7 }), 0.85, 0.98, -0.15);
+    box(contactor, 0.55, 0.22, 0.4, mat(0x241c14, { roughness: 0.4, metalness: 0.45 }), 0, 0.85, 0);
+    box(contactor, 0.38, 0.04, 0.26, mat(0xf0d48a, { emissive: 0xc4922a, emissiveIntensity: 0.3, metalness: 0.7 }), 0, 0.72, 0);
     chuck.add(contactor);
     parts.contactor = contactor;
-    const nest = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.06, 1.05), mat(0x1a2420, { roughness: 0.45, metalness: 0.3 }));
-    nest.position.y = 0.06;
-    chuck.add(nest);
-    const lampMat = mat(0x143028, { emissive: 0x3ee0c0, emissiveIntensity: 0.15, roughness: 0.35 });
-    box(chuck, 1.25, 0.045, 0.05, lampMat, 0, 0.12, 0.58);
-    box(chuck, 1.25, 0.045, 0.05, lampMat, 0, 0.12, -0.58);
-    box(chuck, 0.05, 0.045, 1.15, lampMat, 0.6, 0.12, 0);
-    box(chuck, 0.05, 0.045, 1.15, lampMat, -0.6, 0.12, 0);
+    const lampMat = mat(0x143028, { emissive: 0x3ee0c0, emissiveIntensity: 0.2 });
+    box(chuck, 0.9, 0.03, 0.03, lampMat, 0, 0.08, 0.4);
     parts.lamp = lampMat;
+  } else if (kind === "marker") {
+    addHead(chuck, parts, "marker");
+    const beamMat = mat(0xff6b7a, { emissive: 0xff3048, emissiveIntensity: 1.1, transparent: true, opacity: 0.15, roughness: 0.2 });
+    const beam = box(chuck, 0.02, 0.7, 0.02, beamMat, 0, 0.45, 0);
+    parts.laser = beam;
+  } else if (kind === "packer") {
+    box(group, 1.55, 0.7, 0.55, mat(0x1c1814, { roughness: 0.45, metalness: 0.4 }), 0.35, 0.85, -0.45);
+    for (let i = 0; i < 4; i++) {
+      box(group, 0.7, 0.025, 0.4, mat(0x14181e, { roughness: 0.5, metalness: 0.3 }), 0.4, 0.58 + i * 0.12, -0.45);
+    }
+    const pusher = new THREE.Group();
+    box(pusher, 0.4, 0.06, 0.08, STEEL, 0, 0.16, 0);
+    chuck.add(pusher);
+    parts.pusher = pusher;
+    box(chuck, 0.85, 0.04, 0.6, mat(0x14181e, { roughness: 0.5, metalness: 0.25 }), 0, 0.05, 0);
   }
 
-  const lights = stackLight(group, 2.05, 0.3, -1.45);
-  const window = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.55, 0.05), GLASS);
-  window.position.set(0, 1.15, 1.72);
-  group.add(window);
-
+  const lights = stackLight(group, 1.15, 0.22, -0.9);
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(4.8, 3.3, 3.8),
+    new THREE.BoxGeometry(2.5, 2.3, 2.2),
     new THREE.MeshBasicMaterial({ visible: false })
   );
-  hit.position.y = 1.5;
+  hit.position.set(0, 1.1, 0);
   hit.userData.toolId = station.tool;
   group.add(hit);
 
-  const point = new THREE.PointLight(0x3ee0c0, 0, 7);
-  point.position.set(0, 2.2, 0.4);
+  const point = new THREE.PointLight(accentHex, 0, 5);
+  point.position.set(0, 1.8, 0.2);
   group.add(point);
 
   return { group, chuck, load, hit, parts, lights, point, kind };
@@ -266,10 +336,7 @@ export function poseTool(built, m, spin) {
   const { parts } = built;
   if (parts.head) {
     parts.head.position.set(m.head.x, m.head.y, m.head.z);
-    if (parts.quill) {
-      const reach = Math.max(0.08, 1.58 - m.head.y);
-      parts.quill.scale.y = reach;
-    }
+    if (parts.quill) parts.quill.scale.y = Math.max(0.08, 1.15 - m.head.y);
   }
   if (parts.spindle) {
     parts.spindle.position.set(m.blade.x, m.blade.y, m.blade.z);
@@ -281,12 +348,31 @@ export function poseTool(built, m, spin) {
       parts.spinner.rotation.set(spin, 0, 0);
     }
   }
-  if (parts.lamp) parts.lamp.emissiveIntensity = 0.12 + m.lamp * 1.6;
-  if (parts.pusher) parts.pusher.position.x = 1.2 + (0.15 - 1.2) * m.pusher;
-  if (parts.cards) parts.cards.position.y = m.pusher * 0.08;
-  if (parts.table) parts.table.position.x = (m.table || 0) * 0.42;
-  if (parts.contactor) parts.contactor.position.y = -((m.contactor || 0) * 0.42);
-  if (parts.optics) parts.optics.rotation.y = Math.sin((m.head?.x || 0) * 2) * 0.18;
+  if (parts.wheel) {
+    parts.wheel.position.y = 0.55 - (m.wheel || 0) * 0.28;
+    if (parts.spinner) parts.spinner.rotation.x = spin;
+  }
+  if (parts.roll) parts.roll.rotation.x = spin * 0.15;
+  if (parts.lamp) parts.lamp.emissiveIntensity = 0.12 + (m.lamp || 0) * 1.4;
+  if (parts.glow && parts.glow.emissiveIntensity != null) {
+    const base = built.kind === "plasma" ? 0.35 : 0.25;
+    parts.glow.emissiveIntensity = base + (m.lamp || 0) * 1.3;
+  }
+  if (parts.pusher) parts.pusher.position.x = -0.45 + (m.pusher || 0) * 0.7;
+  if (parts.cards) parts.cards.position.y = (m.pusher || 0) * 0.05;
+  if (parts.table) parts.table.position.x = (m.table || 0) * 0.25;
+  if (parts.contactor) parts.contactor.position.y = 0.85 - (m.contactor || 0) * 0.28;
+  if (parts.optics) parts.optics.rotation.y = Math.sin((m.head?.x || 0) * 2) * 0.15;
+  if (parts.sweep) parts.sweep.position.x = (m.sweep || 0) * 0.45;
+  if (parts.ovenDoor) {
+    if (parts.ovenDoor.userData.baseY == null) parts.ovenDoor.userData.baseY = parts.ovenDoor.position.y;
+    parts.ovenDoor.position.y = parts.ovenDoor.userData.baseY + (m.door || 0) * 0.35;
+  }
+  if (parts.needle) parts.needle.position.y = 0.55 - (m.needle || 0) * 0.38;
+  if (parts.laser) {
+    parts.laser.material.opacity = 0.05 + (m.laser || 0) * 0.85;
+    parts.laser.scale.y = 0.3 + (m.laser || 0) * 0.7;
+  }
 }
 
 const SHELL = {
@@ -316,13 +402,10 @@ export function carrierShell(type) {
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.08;
     g.add(ring);
-    const tape = cyl(g, 0.44, 0.44, 0.02, SHELL.tape, 0, 0.06, 0, 28);
-    tape.castShadow = false;
+    cyl(g, 0.44, 0.44, 0.02, SHELL.tape, 0, 0.06, 0, 28);
   } else if (type === "MAG") {
     box(g, 0.55, 1.35, 0.4, DARK, 0, 0.7, 0);
-    for (let i = 0; i < 6; i++) {
-      box(g, 0.48, 0.03, 0.34, SHELL.sub, 0.04, 0.22 + i * 0.18, 0);
-    }
+    for (let i = 0; i < 6; i++) box(g, 0.48, 0.03, 0.34, SHELL.sub, 0.04, 0.22 + i * 0.18, 0);
   } else {
     box(g, 1.15, 0.06, 0.78, SHELL.tray, 0, 0.06, 0);
     box(g, 1.15, 0.04, 0.04, DARK, 0, 0.1, 0.37);
