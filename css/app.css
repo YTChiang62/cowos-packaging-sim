@@ -126,6 +126,7 @@ button, input, select { font: inherit; color: inherit; }
 .topbar,
 .lot-dock,
 .tool-dock,
+.facility-dock,
 .stage-rail,
 .cam-dock,
 .disclaimer,
@@ -435,9 +436,72 @@ button, input, select { font: inherit; color: inherit; }
   color: #ffd4d8;
 }
 
-.tool-dock {
+.facility-dock {
   top: calc(var(--safe) + 72px);
   right: var(--safe);
+  width: 312px;
+  max-height: calc(100% - 230px);
+  overflow: auto;
+  padding: 12px 12px 10px;
+}
+.zone-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.zone-chip {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  color: var(--copper-2);
+}
+.zone-chip.is-locked { color: #ffd4d8; border-color: rgba(255, 107, 122, 0.5); }
+.wh-table-wrap { overflow: auto; max-height: 168px; margin-bottom: 8px; }
+.wh-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.wh-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 2px 4px 4px;
+  position: sticky;
+  top: 0;
+  background: rgba(12, 24, 30, 0.92);
+}
+.wh-table td { padding: 3px 4px; border-top: 1px solid var(--line-soft); font-family: var(--font-mono); }
+.wh-table tr.is-locked td { color: #ffb4bc; }
+.wh-table tr.is-transit td { color: var(--mint); }
+.oht-kicker { margin-top: 8px; }
+.oht-kicker small { color: var(--muted); letter-spacing: 0.14em; margin-left: 6px; }
+.veh-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.veh {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 11.5px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+.veh b { font-family: var(--font-mono); font-size: 11px; }
+.veh em { color: var(--muted); font-style: normal; font-family: var(--font-mono); font-size: 10px; }
+.veh-travel, .veh-hoist_pick, .veh-hoist_drop, .veh-goto_pick { color: var(--mint); }
+.veh-paused { color: #ffd4d8; }
+.call-row { display: flex; gap: 4px; margin-bottom: 6px; }
+.call-row select, .call-row button, #btn-dispatch, #btn-return-stock {
+  font-size: 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 5px 6px;
+}
+.call-row select { flex: 1; min-width: 0; }
+#btn-dispatch, #btn-return-stock { width: 100%; margin-bottom: 6px; cursor: pointer; }
+.wh-log { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wh-log li { font-size: 10.5px; color: var(--muted); line-height: 1.35; }
+
+.tool-dock {
+  top: auto;
+  bottom: 168px;
+  right: calc(var(--safe) + 328px);
   width: 280px;
   padding: 14px 16px;
   display: none;
@@ -698,12 +762,15 @@ button, input, select { font: inherit; color: inherit; }
   .disclaimer { left: var(--safe); right: var(--safe); }
   .mes-beats { left: var(--safe); right: var(--safe); bottom: 96px; }
   .lot-dock { width: 300px; max-height: calc(100% - 200px); }
+  .facility-dock { width: 280px; max-height: 42vh; }
+  .tool-dock { right: var(--safe); }
   .radio-dock { display: none !important; }
 }
 
 @media (max-width: 760px) {
-  .lot-dock { width: calc(100% - 32px); max-height: 38%; }
-  .tool-dock { top: auto; bottom: 130px; width: calc(100% - 32px); }
+  .lot-dock { width: calc(100% - 32px); max-height: 34%; }
+  .facility-dock { top: auto; bottom: 120px; width: calc(100% - 32px); max-height: 28%; }
+  .tool-dock { top: auto; bottom: 130px; right: var(--safe); width: calc(100% - 32px); }
   .cam-dock { display: none; }
   .sheet h1 { font-size: 22px; }
 }

@@ -1,3 +1,4 @@
+import { Facility } from "./facility.js";
 import {
   HOLD_AT,
   HOLDS,
@@ -57,6 +58,12 @@ export class Session {
     this.plannedHolds = new Set(planHolds(intensity));
     this.firedHolds = new Set();
     this.lot = makeLot();
+    this.facility = new Facility({
+      lot: this.lot,
+      kgdLocked: this.plannedHolds.has("kgd"),
+      mode: "AUTO",
+    });
+    this._putawayStarted = false;
     this.listeners = new Map();
     this._acc = 0;
     this._goal = 0;
@@ -121,6 +128,7 @@ export class Session {
       morph: this.morph,
       processProgress: this.processProgress,
       holdsResolved: this.holdsResolved.slice(),
+      facility: this.facility.snapshot(),
     };
   }
 
@@ -146,6 +154,7 @@ export class Session {
   setAuto(on) {
     if (this.status === "DONE") return;
     this.auto = on;
+    if (on && this.facility.mode !== "PAUSE") this.facility.setMode("AUTO");
     if (on && !this.busy && !this.hold) this.advance();
     this.change();
   }
@@ -187,12 +196,47 @@ export class Session {
     this.processProgress = 0;
 
     if (beat === "transport") {
+      const approach = this.facility.beginApproach(step.id);
+      if (!approach.ok) {
+        if (approach.hold === "kgd") {
+          this.firedHolds.add(step.id);
+          this._openHold("kgd");
+          return;
+        }
+        this.busy = false;
+        this._chain = false;
+        this.status = "QUEUE";
+        this.emit("toast", { key: "moveRefused", vars: { reason: approach.reason || "refused" } });
+        this.change();
+        return;
+      }
       this._awaitingTransport = true;
       this._acc = 0;
       this._goal = 0;
       this.change();
       this.emit("transport", { to: step, carrier: this.travelCarrier() });
       return;
+    }
+
+    if (beat === "process" && !this.facility.readyForProcess(step.id)) {
+      this.busy = false;
+      this._chain = false;
+      this.emit("toast", { key: "needDock" });
+      this.change();
+      return;
+    }
+
+    if (beat === "track-out" && step.id === "ballpack" && !this._putawayStarted) {
+      this._putawayStarted = true;
+      const putaway = this.facility.beginPutaway();
+      if (!putaway.done) {
+        this._awaitingTransport = true;
+        this._acc = 0;
+        this._goal = 0;
+        this.change();
+        this.emit("transport", { to: step, carrier: "TRAY", putaway: true });
+        return;
+      }
     }
 
     const durations = {
@@ -214,13 +258,18 @@ export class Session {
 
   transportDone() {
     if (!this._awaitingTransport) return;
+    if (!this.facility.approachDone()) return;
+    this.facility.consumeApproach();
     this._awaitingTransport = false;
     this._finishBeat();
   }
 
   tick(dt) {
+    const scaled = dt * this.speed;
+    this.facility.tick(scaled);
+    if (this._awaitingTransport && this.facility.approachDone()) this.transportDone();
     if (this.hold && this.hold.waiting) {
-      this._acc += dt * this.speed;
+      this._acc += scaled;
       if (this._acc >= this._goal) {
         this.hold.waiting = false;
         this._clearHold("wait");
@@ -228,7 +277,7 @@ export class Session {
       return;
     }
     if (!this.busy || this._awaitingTransport || this.hold) return;
-    this._acc += dt * this.speed;
+    this._acc += scaled;
     const beat = BEATS[this.beatIndex];
     if (beat === "process") {
       this.processProgress = Math.min(1, this._acc / this._goal);
@@ -245,6 +294,7 @@ export class Session {
 
   _openHold(id) {
     const def = HOLDS[id];
+    this.facility.onHold(def.stationId);
     this.hold = { id, ...def, waiting: false };
     this.busy = false;
     this.auto = false;
@@ -285,7 +335,9 @@ export class Session {
 
     if (action.id === "rework") {
       const back = STATIONS.findIndex((s) => s.id === action.backTo);
+      const stationId = this.hold.stationId;
       this.holdsResolved.push({ id: this.hold.id, action: "rework" });
+      this.facility.onHoldCleared({ action: "rework", stationId, qty: this.lot.goodSites });
       this.hold = null;
       this.status = "QUEUE";
       this.stepIndex = back >= 0 ? back : this.stepIndex;
@@ -315,7 +367,9 @@ export class Session {
     }
 
     if (action.id === "bake") {
+      const stationId = this.hold.stationId;
       this.holdsResolved.push({ id: this.hold.id, action: "bake" });
+      this.facility.onHoldCleared({ action: "bake", stationId, qty: this.lot.goodSites });
       this.hold = null;
       this.status = "QUEUE";
       this.beatIndex = 0;
@@ -340,8 +394,29 @@ export class Session {
   }
 
   _clearHold(action) {
-    this.holdsResolved.push({ id: this.hold.id, action });
+    const id = this.hold.id;
+    const stationId = this.hold.stationId;
+    this.holdsResolved.push({ id, action });
     this.hold = null;
+    if (id === "kgd" && BEATS[this.beatIndex] === "transport") {
+      this.facility.onHoldCleared({ action, stationId, qty: this.lot.goodSites });
+      const approach = this.facility.beginApproach("diebank");
+      if (!approach.ok) {
+        this.firedHolds.add("diebank");
+        this._openHold("kgd");
+        return;
+      }
+      this.status = "RUN";
+      this.busy = true;
+      this._chain = this.mode === "station" || this.auto;
+      this._awaitingTransport = true;
+      this._acc = 0;
+      this._goal = 0;
+      this.change();
+      this.emit("resolved", { action, resume: true });
+      return;
+    }
+    this.facility.onHoldCleared({ action, stationId, qty: this.lot.goodSites });
     this.status = "RUN";
     this.busy = true;
     this._chain = this.mode === "station";
@@ -392,6 +467,7 @@ export class Session {
 
   _applyProcessEffects(step) {
     const lot = this.lot;
+    this.facility.presentOutput(step.id);
     if (step.id === "diebank") lot.notes.push("kgd-issued");
     if (step.id === "hbond") lot.notes.push("cow-bonded");
     if (step.id === "dice") lot.notes.push("singulated");

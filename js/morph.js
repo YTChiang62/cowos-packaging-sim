@@ -224,6 +224,13 @@ function wosLift(t, fault) {
   return fault * forced + (1 - fault) * natural;
 }
 
+function contactorDip(t, fault) {
+  if (fault > 0.5) return 0.22;
+  if (t < 0.55) return 0;
+  if (t < 0.74) return smooth((t - 0.55) / 0.19);
+  return 1 - smooth(Math.min(1, (t - 0.74) / 0.2));
+}
+
 function ballLift(t, fault) {
   const forced = 0.22;
   let natural;
@@ -267,7 +274,9 @@ export function motion(station, t, fault = 0) {
   const head = { x: aim.x, y: aim.y + lift, z: aim.z };
   const lamp = station === "ballpack" && f < 0.5 ? smooth(Math.max(0, 1 - Math.abs(u - 0.5) / 0.12)) : 0;
   const pusher = station === "wos" ? smooth(Math.min(1, u / 0.42)) : 0;
-  return { pose, head, blade: bladeCue(u), lamp, pusher };
+  const table = station === "dice" ? bladeCue(u).x : 0;
+  const contactor = station === "ballpack" ? contactorDip(u, f) : 0;
+  return { pose, head, blade: bladeCue(u), lamp, pusher, table, contactor };
 }
 
 export function specForMorph(morph) {
