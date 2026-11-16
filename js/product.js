@@ -82,9 +82,10 @@ export class Workpiece {
     this.coupon = box(this.stack, 0.52, 0.04, 0.46, this.couponMat, 0, 0.02, 0);
     this.bond = new THREE.Group();
     box(this.bond, 0.56, 0.012, 0.5, mat(0x5c4328, { metalness: 0.5, roughness: 0.4 }), 0, 0, 0);
-    box(this.bond, 0.5, 0.02, 0.44, mat(0xffd27a, {
+    this.bondGlowMat = mat(0xffd27a, {
       metalness: 0.65, roughness: 0.2, emissive: 0xe0a040, emissiveIntensity: 0.85,
-    }), 0, 0.016, 0);
+    });
+    box(this.bond, 0.5, 0.02, 0.44, this.bondGlowMat, 0, 0.016, 0);
     const halo = new THREE.Mesh(
       new THREE.TorusGeometry(0.3, 0.018, 8, 28),
       mat(0xffd27a, { metalness: 0.6, roughness: 0.25, emissive: 0xe0a040, emissiveIntensity: 0.7 })
@@ -97,6 +98,13 @@ export class Workpiece {
     this.logic = box(this.stack, 0.4, 0.075, 0.34, this.logicMat, 0, 0, 0);
     this.hbmMat = mat(0x3ee0c0, { roughness: 0.35, metalness: 0.35, emissive: 0x0a3a32, emissiveIntensity: 0.35 });
     this.hbms = [0, 1, 2, 3].map(() => box(this.stack, 0.3, 0.055, 0.2, this.hbmMat, 0, 0, 0));
+    this.filletMat = fadeMat(0x8a6244, { roughness: 0.28, metalness: 0.08, emissive: 0x4a3018, emissiveIntensity: 0.2 });
+    this.fillet = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.05, 8, 28), this.filletMat);
+    this.fillet.rotation.x = Math.PI / 2;
+    this.fillet.position.y = 0.04;
+    this.stack.add(this.fillet);
+    this.mark = makeMark("HBX-100");
+    this.stack.add(this.mark);
     g.add(this.stack);
 
     this.cloneMat = {
@@ -175,7 +183,9 @@ export class Workpiece {
     const hideScenery = compact ? 0 : 1;
 
     this.wafer.position.set(pose.wafer.x, pose.wafer.y, pose.wafer.z);
-    this.wafer.scale.setScalar(Math.max(0.001, pose.wafer.s));
+    const ws = Math.max(0.001, pose.wafer.s);
+    const thin = pose.thin || 0;
+    this.wafer.scale.set(ws, Math.max(0.22, ws * (1 - thin * 0.72)), ws);
     this.wafer.visible = fadeMaterial(this.waferMat, pose.wafer.op);
     this.ring.visible = fadeMaterial(this.ringMat, pose.ring);
     this.fiducials.visible = fadeMaterial(this.fidMat, pose.fiducial);
@@ -198,13 +208,23 @@ export class Workpiece {
     }
 
     this.stack.position.set(pose.stack.x, pose.stack.y, pose.stack.z);
-    this.stack.scale.setScalar(Math.max(0.001, pose.stack.s));
+    const ss = Math.max(0.001, pose.stack.s);
+    const stackThin = 1 - (pose.thin || 0) * 0.38;
+    this.stack.scale.set(ss, ss * stackThin, ss);
     this.logic.position.set(pose.logic.x, pose.logic.y, pose.logic.z);
     pose.hbms.forEach((h, i) => this.hbms[i].position.set(h.x, h.y, h.z));
     this.bond.position.set(pose.bond.x, pose.bond.y, pose.bond.z);
     const bs = Math.max(0.001, pose.bond.s);
     this.bond.scale.setScalar(bs);
     this.bond.visible = pose.bond.op > 0.05 && pose.bond.s > 0.04;
+    if (this.bondGlowMat) this.bondGlowMat.emissiveIntensity = 0.75 + (pose.bondGlow || 0) * 1.35;
+    const fillet = pose.fillet || 0;
+    this.fillet.visible = fadeMaterial(this.filletMat, fillet);
+    this.fillet.scale.setScalar(0.55 + fillet * 0.55);
+    this.filletMat.roughness = 0.22 + (pose.filletCure || 0) * 0.5;
+    this.filletMat.emissiveIntensity = fillet * (0.12 + (pose.filletCure || 0) * 0.45);
+    this.mark.visible = (pose.mark || 0) > 0.35;
+    this.mark.position.set(pose.logic.x, pose.logic.y + 0.08, pose.logic.z);
     this.coupon.visible = fadeMaterial(this.couponMat, pose.couponOp);
     if (pose.ring > 0.45) {
       this.logicMat.emissive.setHex(0x8a2030);
@@ -269,6 +289,24 @@ export class Workpiece {
     const m = motion(spec.station, spec.t, spec.fault);
     this.applyPose(m.pose, this.compact);
   }
+}
+
+function makeMark(text) {
+  const cv = document.createElement("canvas");
+  cv.width = 256;
+  cv.height = 64;
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, 256, 64);
+  g.fillStyle = "#f4efe4";
+  g.font = "700 36px 'Sora', sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sprite.scale.set(0.42, 0.1, 1);
+  return sprite;
 }
 
 function makeCaption() {

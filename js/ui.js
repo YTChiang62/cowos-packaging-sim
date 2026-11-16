@@ -1,5 +1,6 @@
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
 import { BEATS, STEPS } from "./mes.js";
+import { PORTS, recipeById } from "./route.js";
 
 
 export function bindUI() {
@@ -11,6 +12,7 @@ export function bindUI() {
     lotTool: document.getElementById("lot-tool"),
     lotCarrier: document.getElementById("lot-carrier"),
     lotRecipe: document.getElementById("lot-recipe"),
+    lotParams: document.getElementById("lot-params"),
     lotSites: document.getElementById("lot-sites"),
     lotMorph: document.getElementById("lot-morph"),
     genealogy: document.getElementById("genealogy"),
@@ -21,6 +23,7 @@ export function bindUI() {
     toolName: document.getElementById("tool-name"),
     toolGroup: document.getElementById("tool-group"),
     toolRecipe: document.getElementById("tool-recipe"),
+    toolParams: document.getElementById("tool-params"),
     toolLot: document.getElementById("tool-lot"),
     toolContract: document.getElementById("tool-contract"),
     holdLayer: document.getElementById("hold-layer"),
@@ -66,6 +69,7 @@ export function renderLot(lang, session, snap, els) {
   els.lotStep.textContent = `${stepIndex + 1}/${STEPS.length}  ${t(lang, "step_" + step.id)}`;
   els.lotTool.textContent = step.tool;
   els.lotRecipe.textContent = step.recipe;
+  if (els.lotParams) fillParams(lang, step.recipe, els.lotParams);
   els.lotSites.textContent = t(lang, "sitesLine", {
     good: lot.goodSites,
     total: lot.totalSites,
@@ -107,24 +111,56 @@ export function renderBeats(lang, snap, els) {
   els.beats.replaceChildren(wrap);
 }
 
+function paramLabel(lang, param) {
+  const key = "p_" + param.id;
+  const label = t(lang, key);
+  return label === key ? param.name : label;
+}
+
+export function fillParams(lang, recipeId, el) {
+  el.replaceChildren();
+  const recipe = recipeById(recipeId);
+  if (!recipe) return;
+  for (const param of recipe.params) {
+    const row = document.createElement("span");
+    row.className = "param";
+    const unit = param.unit ? ` ${param.unit}` : "";
+    row.textContent = `${paramLabel(lang, param)}  ${param.value}${unit}`;
+    el.append(row);
+  }
+}
+
 export function renderStages(lang, snap, els) {
   els.stageRail.innerHTML = "";
+  let lastBay = null;
+  let current = null;
   for (let i = 0; i < STEPS.length; i++) {
     const st = STEPS[i];
+    if (st.bay !== lastBay) {
+      const lab = document.createElement("span");
+      lab.className = "flow-bay";
+      lab.textContent = t(lang, "bay_" + st.bay);
+      els.stageRail.append(lab);
+      lastBay = st.bay;
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "stage-chip";
     btn.dataset.station = st.id;
     btn.dataset.stage = st.id;
-    btn.textContent = t(lang, "stage_" + st.stage);
-    if (i === snap.stepIndex && snap.status !== "DONE") btn.classList.add("is-current");
-    else if (i < snap.stepIndex || snap.status === "DONE") btn.classList.add("is-done");
+    btn.textContent = `${i + 1} ${t(lang, "step_" + st.id)}`;
+    if (i === snap.stepIndex && snap.status !== "DONE") {
+      btn.classList.add("is-current");
+      current = btn;
+    } else if (i < snap.stepIndex || snap.status === "DONE") btn.classList.add("is-done");
     if (snap.status === "HOLD" && i === snap.stepIndex) {
       btn.classList.add("is-hold");
       btn.classList.remove("is-current");
+      current = btn;
     }
     els.stageRail.append(btn);
   }
+  current?.scrollIntoView({ block: "nearest", inline: "center" });
 }
 
 export function renderHold(lang, session, els) {
@@ -153,23 +189,17 @@ export function showTool(lang, session, els, toolId) {
   const step = STEPS.find((s) => s.tool === toolId);
   els.toolDock.classList.add("is-on");
   els.toolName.textContent = toolId;
-  els.toolGroup.textContent = step ? t(lang, "bay_" + (step.stage === "grind" ? "grind" : step.stage)) : "—";
-  // grind stage uses bay_grind
   if (step) {
-    const bayKey = step.stage === "incoming" ? "bay_incoming"
-      : step.stage === "cow" ? "bay_cow"
-      : step.stage === "grind" ? "bay_grind"
-      : step.stage === "dice" ? "bay_dice"
-      : step.stage === "wos" ? "bay_wos"
-      : step.stage === "test" ? "bay_test"
-      : "bay_pack";
-    els.toolGroup.textContent = t(lang, bayKey);
+    els.toolGroup.textContent = t(lang, "bay_" + step.bay);
     els.toolRecipe.textContent = step.recipe;
+    if (els.toolParams) fillParams(lang, step.recipe, els.toolParams);
     if (els.toolContract) {
       els.toolContract.textContent = `${t(lang, "chg_" + step.id)} ${t(lang, "out_" + step.id)}`;
     }
   } else {
+    els.toolGroup.textContent = "—";
     els.toolRecipe.textContent = "—";
+    if (els.toolParams) els.toolParams.replaceChildren();
     if (els.toolContract) els.toolContract.textContent = "";
   }
   const onThis = session && session.step().tool === toolId && session.status !== "QUEUE";
@@ -296,7 +326,7 @@ export function renderFacility(lang, session) {
     src.append(opt);
   }
   if ([...src.options].some((o) => o.value === keepSrc)) src.value = keepSrc;
-  const ports = ["io:DBK", "io:INT", "io:SUB", "io:FG", "DBK-02", "DBK-02:tray", "HB-21", "DIC-81", "WOS-04", "WOS-04:unit", "WOS-04:out", "BPK-05"];
+  const ports = Object.keys(PORTS);
   if (!dst.options.length) {
     for (const port of ports) {
       const opt = document.createElement("option");

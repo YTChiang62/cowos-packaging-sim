@@ -114,10 +114,10 @@ function buildRail() {
     group.add(hanger);
   }
   for (const node of RAIL_NODES) {
-    if (!node.id.startsWith("io") && !["DBK-02", "HB-21", "DIC-81", "WOS-04", "BPK-05"].includes(node.id)) continue;
-    const stub = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.05, 0.12), railMat);
-    stub.position.set(node.x + 1.15, RAIL_Y - 0.05, node.z);
-    group.add(stub);
+    if (["westN", "eastN", "eastS", "westS"].includes(node.id)) continue;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.42), railMat);
+    pad.position.set(node.x, RAIL_Y - 0.12, node.z);
+    group.add(pad);
   }
   return group;
 }

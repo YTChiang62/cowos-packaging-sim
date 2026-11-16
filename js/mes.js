@@ -2,6 +2,7 @@ import { Facility } from "./facility.js";
 import {
   HOLD_AT,
   HOLDS,
+  PUTAWAY,
   STATIONS,
   committedMorph,
   genealogyRows,
@@ -226,7 +227,7 @@ export class Session {
       return;
     }
 
-    if (beat === "track-out" && step.id === "ballpack" && !this._putawayStarted) {
+    if (beat === "track-out" && step.id === PUTAWAY.stationId && !this._putawayStarted) {
       this._putawayStarted = true;
       const putaway = this.facility.beginPutaway();
       if (!putaway.done) {
@@ -470,9 +471,12 @@ export class Session {
     this.facility.presentOutput(step.id);
     if (step.id === "diebank") lot.notes.push("kgd-issued");
     if (step.id === "hbond") lot.notes.push("cow-bonded");
+    if (step.id === "backgrind") lot.notes.push("thinned");
     if (step.id === "dice") lot.notes.push("singulated");
     if (step.id === "wos") lot.notes.push("wos-seated");
-    if (step.id === "ballpack") lot.notes.push("packed");
+    if (step.id === "ufcure") lot.notes.push("underfilled");
+    if (step.id === "ball") lot.notes.push("balled");
+    if (step.id === "pack") lot.notes.push("packed");
   }
 
   /** Carrier model while the lot is moving into this station. */

@@ -150,7 +150,7 @@ document.getElementById("btn-restart").addEventListener("click", () => {
   plant.cancelSolo();
   plant.endLive();
   plant.clearStatuses();
-  plant.showLot("bank", "DBK-02", "FOUP");
+  plant.showLot("bank", "IQC-11", "FOUP");
   plant.focusOverview();
   renderAll(state.lang, null, els);
 });

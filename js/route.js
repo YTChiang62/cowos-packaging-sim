@@ -1,148 +1,460 @@
 /**
- * HBX-100 route contract (trainer v3).
+ * HBX-100 route contract (trainer v4).
  *
- * One short route. Five process stations. Genealogy, MES-style status, the
- * 3D morph state, the electronic warehouse, and the overhead crane all read
- * this module — do not add a process station, and do not keep a second
- * state machine beside it.
+ * One flow, five process bays, twenty-one operations. Genealogy, MES-style
+ * status, the 3D morph state, recipes, the electronic warehouse, and the
+ * overhead crane all read this module. Do not keep a second state machine.
  *
- * Morphology commits only when that station's process finishes with no open
- * hold:
- *   bank → issued → bonded → singulated → wos → packed
+ * Morphology commits only when the operation that owns that morph finishes
+ * with no open hold:
+ *   bank → issued → bonded → thinned → singulated → wos → underfilled → balled → packed
  *
- * A hold keeps the lot on its station. `blocksMorph` is the first morphology
- * that must not be committed while the hold is open (every later morphology
- * is blocked with it). The same hold locks the carrier at that tool and
- * refuses an overhead-crane delivery to any other process station.
+ * A hold freezes morphology at HOLD_AT of that operation and refuses an
+ * overhead-crane delivery to any other process tool. The carrier stays at
+ * the tool that detected the hold, or it may return to the stocker.
  *
- * The stocker at the head of the aisle is a facility, not a sixth station.
- * Zones, inventory status, crane modes, and the dock each station requires
- * before its process may start are declared below.
+ * The stocker at the head of the aisle is a facility, not a sixth bay.
  *
- * Refinements vs the v1 seventeen-step walk, recorded so the fields stay
- * explicit:
- * - Station 1's traveling carrier code is FOUP. The die-bank waffle trays are
- *   part of the tool, and both are on screen. The contract carrier is
- *   "FOUP and die-bank tray".
- * - Station 2's "substrate/wafer" is the target interposer wafer in the FOUP.
- *   The package substrate arrives at WoS in the magazine.
- * - Dice carrier code is FRAME (dicing frame and tape). There is no hold
- *   unique to dice.
- * - Bond-offset rework retries HB-21. This route has no plasma station.
- * - Warpage retries WoS. Balls are not part of this station.
- * - Underfill void is on ball / FT / pack (station 5), not a separate
- *   underfill station. Rework retries BPK-05.
+ * v4 relative to v3:
+ * - The five stations are an ordered FLOW. Bays stay incoming, CoW, dice,
+ *   WoS, and ball / final test / pack.
+ * - PLS-11 is on this route. Plasma is a real tool.
+ * - Bond-offset is detected at MET-23 (overlay), not at the bonder. Rework
+ *   returns to HB-21, then anneal, then overlay. Thinned and singulated
+ *   morphs stay uncommitted while the hold is open.
+ * - Underfill void originates at UF-05. Rework retries underfill. The cured
+ *   fillet (underfilled) is committed at CUR-06 only if the hold is clear.
+ * - Warpage originates at MET-07. Balls stay off. Rework returns to WOS-04,
+ *   then underfill, cure, and warpage.
+ * - KGD shortage is still a die-bank issue refusal. The crane must not claim
+ *   a KGD tray that was never issued.
+ * - FRAME is presented at mount (job-out from the CoW side). It is not a
+ *   warehouse zone. It stays the lot carrier until the WoS-side tray
+ *   presentation. The empty frame then sits at the WoS unit port.
+ * - The substrate magazine is issued before subbake, not at diebank.
  * - The lot record still tracks 12 sites. The 3D hero shows one stack plus
  *   three sibling units so singulation reads at camera distance.
  */
 
-export const MORPHS = ["bank", "issued", "bonded", "singulated", "wos", "packed"];
+import { FLOW_ID, RECIPES, recipeById } from "./recipes.js";
 
-/** Process-beat fraction at which a planned hold freezes the station. */
+export { FLOW_ID, RECIPES, recipeById };
+
+export const MORPHS = [
+  "bank",
+  "issued",
+  "bonded",
+  "thinned",
+  "singulated",
+  "wos",
+  "underfilled",
+  "balled",
+  "packed",
+];
+
+/** Process-beat fraction at which a planned hold freezes the operation. */
 export const HOLD_AT = 0.42;
 
-export const STATIONS = [
-  {
+export const BAY_IDS = ["incoming", "cow", "dice", "wos", "pack"];
+
+const NORTH_Z = -17.15;
+const SOUTH_Z = 17.15;
+
+function north(x, bay) {
+  return { x, z: NORTH_Z, face: 1, bay };
+}
+function south(x, bay) {
+  return { x, z: SOUTH_Z, face: -1, bay };
+}
+
+function op(spec) {
+  return {
+    duration: spec.duration,
+    contract: {
+      name: spec.name,
+      carrier: spec.carrierText,
+      in: spec.cin,
+      changes: spec.changes,
+      out: spec.cout,
+      hold: spec.holdText,
+    },
+    id: spec.id,
+    bay: spec.place.bay,
+    stage: spec.place.bay,
+    tool: spec.tool,
+    recipe: spec.recipe,
+    kind: spec.kind,
+    duration: spec.duration,
+    place: spec.place,
+    carrier: spec.carrier,
+    morphIn: spec.morphIn,
+    morphOut: spec.morphOut,
+  };
+}
+
+/** Ordered HBX-100 operations. This is the only process spine. */
+export const FLOW = [
+  op({
+    id: "iqc",
+    tool: "IQC-11",
+    recipe: "IQC-INSP-01",
+    kind: "inspect",
+    duration: 2.8,
+    place: north(-40, "incoming"),
+    carrier: "FOUP",
+    morphIn: "bank",
+    morphOut: "bank",
+    name: "Incoming inspection",
+    carrierText: "Interposer FOUP",
+    cin: "Interposer wafer still in the bank, KGD still in DBK",
+    changes: "Inspect the interposer wafer. Sample plan covers KGD. No issue of dies, no stack.",
+    cout: "FOUP released to the die bank. Morphology stays bank.",
+    holdText: null,
+  }),
+  op({
     id: "diebank",
-    stage: "incoming",
     tool: "DBK-02",
     recipe: "KGD-ISSUE-01",
     kind: "diebank",
     duration: 3.2,
-    place: { x: -34, z: -18, face: 1, bay: "incoming" },
+    place: north(-33.5, "incoming"),
     carrier: "FOUP",
     morphIn: "bank",
     morphOut: "issued",
-    contract: {
-      name: "Incoming / KGD die bank",
-      carrier: "FOUP and die-bank tray",
-      in: "Incoming source wafers and bare KGD still in the bank",
-      changes: "Inspect and issue KGD. No stack yet.",
-      out: "Issued KGD ready for bond",
-      hold: "KGD shortage — no dies are issued; the product must not enter the bonded-stack morphology",
-    },
-  },
-  {
+    name: "Die-bank issue",
+    carrierText: "FOUP and die-bank tray",
+    cin: "Inspected interposer FOUP and bare KGD still in DBK",
+    changes: "Issue KGD onto the lot. Dies stay on one plane. No stack yet.",
+    cout: "Issued KGD, ready for plasma and bond",
+    holdText: "KGD shortage — warehouse refuses the issue; the crane must not claim a tray that was never issued",
+  }),
+  op({
+    id: "plasma",
+    tool: "PLS-11",
+    recipe: "PLASMA-COW-01",
+    kind: "plasma",
+    duration: 2.8,
+    place: north(-24, "cow"),
+    carrier: "FOUP",
+    morphIn: "issued",
+    morphOut: "issued",
+    name: "Plasma / surface activation",
+    carrierText: "FOUP",
+    cin: "Issued KGD and the interposer wafer",
+    changes: "Plasma activates the bond surfaces. Morphology stays issued.",
+    cout: "Activated wafer, still unbonded",
+    holdText: null,
+  }),
+  op({
     id: "hbond",
-    stage: "cow",
     tool: "HB-21",
     recipe: "HBOND-COW-02",
     kind: "bonder",
     duration: 3.4,
-    place: { x: -6, z: -18, face: 1, bay: "cow" },
+    place: north(-18, "cow"),
     carrier: "FOUP",
     morphIn: "issued",
     morphOut: "bonded",
-    contract: {
-      name: "CoW hybrid bond",
-      carrier: "FOUP plus the target interposer wafer",
-      in: "Issued KGD and the target wafer",
-      changes: "Hybrid-bond interface. A stacked die appears on the wafer (CoW).",
-      out: "Bonded stack with a visible bond plane",
-      hold: "Bond offset — show misalignment and do not proceed to the diced morphology",
-    },
-  },
-  {
+    name: "Hybrid bond",
+    carrierText: "FOUP plus the target interposer wafer",
+    cin: "Activated KGD and the target wafer",
+    changes: "Hybrid-bond interface. A stacked die appears on the wafer (CoW).",
+    cout: "Bonded stack with a visible bond plane",
+    holdText: null,
+  }),
+  op({
+    id: "anneal",
+    tool: "ANN-22",
+    recipe: "ANNEAL-COW-01",
+    kind: "oven",
+    duration: 3.0,
+    place: north(-12, "cow"),
+    carrier: "FOUP",
+    morphIn: "bonded",
+    morphOut: "bonded",
+    name: "Post-bond anneal",
+    carrierText: "FOUP",
+    cin: "Bonded CoW wafer",
+    changes: "Anneal. The bond plane may read more clearly. Morphology stays bonded.",
+    cout: "Annealed CoW stack",
+    holdText: null,
+  }),
+  op({
+    id: "overlay",
+    tool: "MET-23",
+    recipe: "MET-OVL-01",
+    kind: "metrology",
+    duration: 2.8,
+    place: north(-6, "cow"),
+    carrier: "FOUP",
+    morphIn: "bonded",
+    morphOut: "bonded",
+    name: "Overlay / bond metrology",
+    carrierText: "FOUP",
+    cin: "Annealed CoW wafer",
+    changes: "Measure bond overlay. An offset hold freezes the lot here.",
+    cout: "Overlay-accepted CoW wafer",
+    holdText: "Bond offset — show the offset stack; do not commit thinned or singulated; do not deliver to backgrind",
+  }),
+  op({
+    id: "backgrind",
+    tool: "BG-24",
+    recipe: "BG-COW-01",
+    kind: "grinder",
+    duration: 3.2,
+    place: north(0, "cow"),
+    carrier: "FOUP",
+    morphIn: "bonded",
+    morphOut: "thinned",
+    name: "Backgrind",
+    carrierText: "FOUP",
+    cin: "Overlay-accepted CoW wafer",
+    changes: "Grind the stack thinner.",
+    cout: "Thinned CoW wafer",
+    holdText: null,
+  }),
+  op({
+    id: "mount",
+    tool: "MNT-80",
+    recipe: "MOUNT-01",
+    kind: "mounter",
+    duration: 2.8,
+    place: south(-40, "dice"),
+    carrier: "FRAME",
+    morphIn: "thinned",
+    morphOut: "thinned",
+    name: "Tape mount",
+    carrierText: "Dicing frame and tape",
+    cin: "Thinned CoW wafer in a FOUP",
+    changes: "Mount onto a dicing frame. The FOUP returns to INT. FRAME is not a warehouse zone.",
+    cout: "Thinned wafer on a FRAME",
+    holdText: null,
+  }),
+  op({
     id: "dice",
-    stage: "dice",
     tool: "DIC-81",
     recipe: "DICE-COW-01",
     kind: "dicer",
     duration: 3.4,
-    place: { x: -34, z: 18, face: -1, bay: "dice" },
+    place: south(-34, "dice"),
     carrier: "FRAME",
-    morphIn: "bonded",
+    morphIn: "thinned",
     morphOut: "singulated",
-    contract: {
-      name: "Dice",
-      carrier: "Bonded wafer on a dicing frame and tape",
-      in: "Bonded CoW wafer",
-      changes: "Singulation. The wafer becomes individual stacks.",
-      out: "Singulated CoW units",
-      hold: null,
-    },
-  },
-  {
+    name: "Dice",
+    carrierText: "Dicing frame and tape",
+    cin: "Thinned CoW wafer on a frame",
+    changes: "Singulation. The wafer becomes individual stacks.",
+    cout: "Singulated CoW units on the frame",
+    holdText: null,
+  }),
+  op({
+    id: "diceaoi",
+    tool: "AOI-82",
+    recipe: "AOI-DICE-01",
+    kind: "inspect",
+    duration: 2.6,
+    place: south(-28, "dice"),
+    carrier: "FRAME",
+    morphIn: "singulated",
+    morphOut: "singulated",
+    name: "Post-dice inspection",
+    carrierText: "Dicing frame",
+    cin: "Singulated CoW units",
+    changes: "Inspect chipping. Morphology stays singulated.",
+    cout: "Inspected singulated units",
+    holdText: null,
+  }),
+  op({
+    id: "subbake",
+    tool: "BAK-03",
+    recipe: "BAKE-SUB-01",
+    kind: "oven",
+    duration: 3.0,
+    place: south(-20, "wos"),
+    carrier: "MAG",
+    morphIn: "singulated",
+    morphOut: "singulated",
+    name: "Substrate pre-bake",
+    carrierText: "Substrate magazine",
+    cin: "Singulated units waiting on the frame; substrate still in SUB",
+    changes: "Issue and bake the substrate magazine. Units stay singulated until attach.",
+    cout: "Baked substrate magazine, ready for WoS",
+    holdText: null,
+  }),
+  op({
     id: "wos",
-    stage: "wos",
     tool: "WOS-04",
     recipe: "WOS-ATTACH-01",
     kind: "wos",
     duration: 3.3,
-    place: { x: 0, z: 18, face: -1, bay: "wos" },
-    carrier: "MAG",
+    place: south(-14, "wos"),
+    carrier: "TRAY",
     morphIn: "singulated",
     morphOut: "wos",
-    contract: {
-      name: "WoS",
-      carrier: "Substrate magazine",
-      in: "Singulated CoW units",
-      changes: "Attach the stack onto the package substrate (WoS assembly).",
-      out: "CoW-on-substrate assembly",
-      hold: "Warpage — the assembly stays at this station; no ball array appears",
-    },
-  },
-  {
-    id: "ballpack",
-    stage: "pack",
-    tool: "BPK-05",
-    recipe: "BALL-FT-PACK-01",
-    kind: "ballpack",
-    duration: 3.6,
-    place: { x: 28, z: 18, face: -1, bay: "pack" },
+    name: "WoS attach",
+    carrierText: "Substrate magazine, then a JEDEC tray",
+    cin: "Singulated CoW on a frame and the baked substrate",
+    changes: "TCB attach onto the package substrate. Tray is presented here; the magazine returns to SUB.",
+    cout: "CoW-on-substrate assembly on a tray",
+    holdText: null,
+  }),
+  op({
+    id: "underfill",
+    tool: "UF-05",
+    recipe: "UF-DISP-01",
+    kind: "dispense",
+    duration: 3.0,
+    place: south(-8, "wos"),
     carrier: "TRAY",
     morphIn: "wos",
+    morphOut: "wos",
+    name: "Underfill dispense",
+    carrierText: "JEDEC tray",
+    cin: "WoS assembly",
+    changes: "Dispense underfill. A void hold freezes the lot before the fillet is complete.",
+    cout: "Wet fillet, not yet cured",
+    holdText: "Underfill void — do not complete a filled fillet, do not commit later morphs, do not deliver to cure",
+  }),
+  op({
+    id: "ufcure",
+    tool: "CUR-06",
+    recipe: "UF-CURE-01",
+    kind: "oven",
+    duration: 2.8,
+    place: south(-2, "wos"),
+    carrier: "TRAY",
+    morphIn: "wos",
+    morphOut: "underfilled",
+    name: "Underfill cure",
+    carrierText: "JEDEC tray",
+    cin: "Dispensed underfill",
+    changes: "Cure. The fillet reads as cured when no void hold is open.",
+    cout: "Cured underfill",
+    holdText: null,
+  }),
+  op({
+    id: "warpage",
+    tool: "MET-07",
+    recipe: "MET-WRP-01",
+    kind: "metrology",
+    duration: 2.6,
+    place: south(4, "wos"),
+    carrier: "TRAY",
+    morphIn: "underfilled",
+    morphOut: "underfilled",
+    name: "Warpage metrology",
+    carrierText: "JEDEC tray",
+    cin: "Cured WoS assembly",
+    changes: "Measure warpage. A hold here keeps balls from appearing.",
+    cout: "Warpage-accepted assembly",
+    holdText: "Warpage — balls must not appear; do not deliver to ball attach",
+  }),
+  op({
+    id: "ball",
+    tool: "BGA-51",
+    recipe: "BALL-ATT-01",
+    kind: "ball",
+    duration: 3.2,
+    place: south(12, "pack"),
+    carrier: "TRAY",
+    morphIn: "underfilled",
+    morphOut: "balled",
+    name: "Ball attach",
+    carrierText: "JEDEC tray",
+    cin: "Warpage-accepted assembly",
+    changes: "Ball array appears.",
+    cout: "Balled unit",
+    holdText: null,
+  }),
+  op({
+    id: "reflow",
+    tool: "RFW-52",
+    recipe: "REFLOW-BGA-01",
+    kind: "oven",
+    duration: 3.0,
+    place: south(17, "pack"),
+    carrier: "TRAY",
+    morphIn: "balled",
+    morphOut: "balled",
+    name: "Ball reflow",
+    carrierText: "JEDEC tray",
+    cin: "Attached balls",
+    changes: "Reflow the ball alloy. Morphology stays balled.",
+    cout: "Reflowed balls",
+    holdText: null,
+  }),
+  op({
+    id: "fluxclean",
+    tool: "CLN-53",
+    recipe: "FLUX-CLN-01",
+    kind: "clean",
+    duration: 2.8,
+    place: south(22, "pack"),
+    carrier: "TRAY",
+    morphIn: "balled",
+    morphOut: "balled",
+    name: "Flux clean",
+    carrierText: "JEDEC tray",
+    cin: "Reflowed unit",
+    changes: "Clean flux. Morphology stays balled.",
+    cout: "Cleaned unit",
+    holdText: null,
+  }),
+  op({
+    id: "ftest",
+    tool: "TST-54",
+    recipe: "FT-HBX-01",
+    kind: "handler",
+    duration: 3.4,
+    place: south(27, "pack"),
+    carrier: "TRAY",
+    morphIn: "balled",
+    morphOut: "balled",
+    name: "Final test",
+    carrierText: "JEDEC tray",
+    cin: "Cleaned balled unit",
+    changes: "Final test on 12 sites. Morphology stays balled.",
+    cout: "Tested unit",
+    holdText: null,
+  }),
+  op({
+    id: "mark",
+    tool: "MRK-55",
+    recipe: "MARK-01",
+    kind: "marker",
+    duration: 2.6,
+    place: south(32, "pack"),
+    carrier: "TRAY",
+    morphIn: "balled",
+    morphOut: "balled",
+    name: "Laser mark",
+    carrierText: "JEDEC tray",
+    cin: "Tested unit",
+    changes: "Laser-mark a readable ID on the unit.",
+    cout: "Marked unit",
+    holdText: null,
+  }),
+  op({
+    id: "pack",
+    tool: "PCK-56",
+    recipe: "PACK-TRAY-01",
+    kind: "packer",
+    duration: 3.2,
+    place: south(37, "pack"),
+    carrier: "TRAY",
+    morphIn: "balled",
     morphOut: "packed",
-    contract: {
-      name: "Ball / FT / pack",
-      carrier: "JEDEC tray",
-      in: "WoS assembly",
-      changes: "Ball/bump array appears, then the unit is tested and placed in the tray.",
-      out: "Bumped, tested, packed unit",
-      hold: "Underfill void — do not complete the bumped/packed morphology",
-    },
-  },
+    name: "Pack",
+    carrierText: "JEDEC tray",
+    cin: "Marked unit",
+    changes: "Seat the unit in the JEDEC tray.",
+    cout: "Packed tray, put away to FG",
+    holdText: null,
+  }),
 ];
+
+/** @deprecated name kept so callers can keep saying "station". The spine is FLOW. */
+export const STATIONS = FLOW;
 
 export const HOLDS = {
   kgd: {
@@ -158,9 +470,9 @@ export const HOLDS = {
   },
   overlay: {
     id: "overlay",
-    stationId: "hbond",
+    stationId: "overlay",
     variant: "offset",
-    blocksMorph: "singulated",
+    blocksMorph: "thinned",
     radio: "radioOverlayPE",
     actions: [
       { id: "rework", label: "hold_overlay_rework", hint: "hold_overlay_rework_s", role: null, backTo: "hbond" },
@@ -170,11 +482,12 @@ export const HOLDS = {
   },
   warpage: {
     id: "warpage",
-    stationId: "wos",
+    stationId: "warpage",
     variant: "warp",
-    blocksMorph: "packed",
+    blocksMorph: "balled",
     radio: "radioWarpPE",
     actions: [
+      { id: "rework", label: "hold_warpage_rework", hint: "hold_warpage_rework_s", role: null, backTo: "wos" },
       { id: "bake", label: "hold_warpage_bake", hint: "hold_warpage_bake_s", role: null },
       { id: "scrap", label: "hold_warpage_scrap", hint: "hold_warpage_scrap_s", role: null, newSubstrate: true },
       { id: "release", label: "hold_warpage_release", hint: "hold_warpage_release_s", role: "PE" },
@@ -182,12 +495,12 @@ export const HOLDS = {
   },
   void: {
     id: "void",
-    stationId: "ballpack",
+    stationId: "underfill",
     variant: "void",
-    blocksMorph: "packed",
+    blocksMorph: "underfilled",
     radio: "radioVoidMFG",
     actions: [
-      { id: "rework", label: "hold_void_rework", hint: "hold_void_rework_s", role: null, backTo: "ballpack" },
+      { id: "rework", label: "hold_void_rework", hint: "hold_void_rework_s", role: null, backTo: "underfill" },
       { id: "scrap", label: "hold_void_scrap", hint: "hold_void_scrap_s", role: null, scrap: 1 },
       { id: "release", label: "hold_void_release", hint: "hold_void_release_s", role: "PE" },
     ],
@@ -205,7 +518,7 @@ export const INV_STATUS = ["stock", "reserved", "transit", "locked"];
 /**
  * One stocker, four zones. Bins are the shelf slots drawn in 3D.
  * DBK holds KGD trays, INT interposer FOUPs, SUB substrate magazines,
- * FG finished JEDEC trays.
+ * FG finished JEDEC trays. FRAME is not a zone.
  */
 export const ZONES = [
   { id: "DBK", carrier: "TRAY", sku: "kgd", bins: ["A1", "A2", "A3"] },
@@ -233,10 +546,9 @@ export const LEG = {
 export const RAIL_Y = 6.25;
 
 /**
- * One-way ceiling loop. Warehouse I/O ports share the west leg.
- * North leg: DBK-02 then HB-21. South leg runs back past BPK, WoS, and dice.
- * A vehicle may pass another load port with the hoist up; it descends only
- * at the port it was assigned.
+ * One-way ceiling loop. North leg runs east from the stocker past incoming
+ * and CoW. South leg runs west past pack, WoS, and dice. A vehicle may pass
+ * a load port with the hoist up; it descends only at the assigned port.
  */
 export const RAIL_NODES = [
   { id: "ioDBK", x: -46, z: -2.4 },
@@ -244,79 +556,158 @@ export const RAIL_NODES = [
   { id: "ioSUB", x: -46, z: 0.8 },
   { id: "ioFG", x: -46, z: 2.4 },
   { id: "westN", x: -46, z: -15.6 },
-  { id: "DBK-02", x: -34, z: -15.6 },
-  { id: "HB-21", x: -6, z: -15.6 },
+  { id: "IQC-11", x: -40, z: -15.6 },
+  { id: "DBK-02", x: -33.5, z: -15.6 },
+  { id: "PLS-11", x: -24, z: -15.6 },
+  { id: "HB-21", x: -18, z: -15.6 },
+  { id: "ANN-22", x: -12, z: -15.6 },
+  { id: "MET-23", x: -6, z: -15.6 },
+  { id: "BG-24", x: 0, z: -15.6 },
   { id: "eastN", x: 42, z: -15.6 },
   { id: "eastS", x: 42, z: 15.6 },
-  { id: "BPK-05", x: 28, z: 15.6 },
-  { id: "WOS-04", x: 0, z: 15.6 },
+  { id: "PCK-56", x: 37, z: 15.6 },
+  { id: "MRK-55", x: 32, z: 15.6 },
+  { id: "TST-54", x: 27, z: 15.6 },
+  { id: "CLN-53", x: 22, z: 15.6 },
+  { id: "RFW-52", x: 17, z: 15.6 },
+  { id: "BGA-51", x: 12, z: 15.6 },
+  { id: "MET-07", x: 4, z: 15.6 },
+  { id: "CUR-06", x: -2, z: 15.6 },
+  { id: "UF-05", x: -8, z: 15.6 },
+  { id: "WOS-04", x: -14, z: 15.6 },
+  { id: "BAK-03", x: -20, z: 15.6 },
+  { id: "AOI-82", x: -28, z: 15.6 },
   { id: "DIC-81", x: -34, z: 15.6 },
+  { id: "MNT-80", x: -40, z: 15.6 },
   { id: "westS", x: -46, z: 15.6 },
 ];
 
 /** Local +Z of a tool's load port. World Z follows the station face. */
-export const LOAD_LOCAL_Z = 2.4;
+export const LOAD_LOCAL_Z = 1.55;
 
 /**
  * Where a crane may drop a carrier, and which types that port accepts.
- * A mismatch is refused. `DBK-02:tray` is the die-bank shelf port; the
- * traveling FOUP uses `DBK-02`. WoS takes a magazine on `WOS-04` and the
- * singulated frame on `WOS-04:unit`.
+ * A mismatch is refused. Extra ports on one tool share that tool's rail node.
  */
 export const PORTS = {
   "io:DBK": { accept: ["TRAY"], rail: "ioDBK", zone: "DBK", kind: "io" },
   "io:INT": { accept: ["FOUP"], rail: "ioINT", zone: "INT", kind: "io" },
   "io:SUB": { accept: ["MAG"], rail: "ioSUB", zone: "SUB", kind: "io" },
   "io:FG": { accept: ["TRAY"], rail: "ioFG", zone: "FG", kind: "io" },
+  "IQC-11": { accept: ["FOUP"], rail: "IQC-11", tool: "IQC-11", stationId: "iqc", kind: "load" },
   "DBK-02": { accept: ["FOUP"], rail: "DBK-02", tool: "DBK-02", stationId: "diebank", kind: "load" },
   "DBK-02:tray": { accept: ["TRAY"], rail: "DBK-02", tool: "DBK-02", stationId: "diebank", kind: "load" },
+  "PLS-11": { accept: ["FOUP"], rail: "PLS-11", tool: "PLS-11", stationId: "plasma", kind: "load" },
   "HB-21": { accept: ["FOUP"], rail: "HB-21", tool: "HB-21", stationId: "hbond", kind: "load" },
+  "ANN-22": { accept: ["FOUP"], rail: "ANN-22", tool: "ANN-22", stationId: "anneal", kind: "load" },
+  "MET-23": { accept: ["FOUP"], rail: "MET-23", tool: "MET-23", stationId: "overlay", kind: "load" },
+  "BG-24": { accept: ["FOUP"], rail: "BG-24", tool: "BG-24", stationId: "backgrind", kind: "load" },
+  "MNT-80": { accept: ["FOUP", "FRAME"], rail: "MNT-80", tool: "MNT-80", stationId: "mount", kind: "load" },
   "DIC-81": { accept: ["FRAME"], rail: "DIC-81", tool: "DIC-81", stationId: "dice", kind: "load" },
+  "AOI-82": { accept: ["FRAME"], rail: "AOI-82", tool: "AOI-82", stationId: "diceaoi", kind: "load" },
+  "BAK-03": { accept: ["MAG"], rail: "BAK-03", tool: "BAK-03", stationId: "subbake", kind: "load" },
   "WOS-04": { accept: ["MAG"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
   "WOS-04:unit": { accept: ["FRAME"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
   "WOS-04:out": { accept: ["TRAY"], rail: "WOS-04", tool: "WOS-04", stationId: "wos", kind: "load" },
-  "BPK-05": { accept: ["TRAY"], rail: "BPK-05", tool: "BPK-05", stationId: "ballpack", kind: "load" },
+  "UF-05": { accept: ["TRAY"], rail: "UF-05", tool: "UF-05", stationId: "underfill", kind: "load" },
+  "CUR-06": { accept: ["TRAY"], rail: "CUR-06", tool: "CUR-06", stationId: "ufcure", kind: "load" },
+  "MET-07": { accept: ["TRAY"], rail: "MET-07", tool: "MET-07", stationId: "warpage", kind: "load" },
+  "BGA-51": { accept: ["TRAY"], rail: "BGA-51", tool: "BGA-51", stationId: "ball", kind: "load" },
+  "RFW-52": { accept: ["TRAY"], rail: "RFW-52", tool: "RFW-52", stationId: "reflow", kind: "load" },
+  "CLN-53": { accept: ["TRAY"], rail: "CLN-53", tool: "CLN-53", stationId: "fluxclean", kind: "load" },
+  "TST-54": { accept: ["TRAY"], rail: "TST-54", tool: "TST-54", stationId: "ftest", kind: "load" },
+  "MRK-55": { accept: ["TRAY"], rail: "MRK-55", tool: "MRK-55", stationId: "mark", kind: "load" },
+  "PCK-56": { accept: ["TRAY"], rail: "PCK-56", tool: "PCK-56", stationId: "pack", kind: "load" },
 };
 
 /**
- * Carriers that must be handed off at the tool before that station's
- * process animation or morph may start.
- * KGD + interposer before station 1. Substrate only before WoS.
+ * Carriers that must be handed off before that operation's process or morph
+ * may start. `unlessLot` / `onlyLot` skip a requirement when a rework is
+ * already traveling on a later carrier (the tray, after WoS).
  */
 export const DOCK_REQUIREMENTS = {
+  iqc: [
+    { port: "IQC-11", type: "FOUP", role: "issue", zone: "INT", sku: "interposer", becomesLot: true },
+  ],
   diebank: [
     { port: "DBK-02:tray", type: "TRAY", role: "issue", zone: "DBK", sku: "kgd" },
-    { port: "DBK-02", type: "FOUP", role: "issue", zone: "INT", sku: "interposer", becomesLot: true },
+    { port: "DBK-02", type: "FOUP", role: "travel" },
   ],
-  hbond: [
-    { port: "HB-21", type: "FOUP", role: "travel" },
-  ],
-  dice: [
-    { port: "DIC-81", type: "FRAME", role: "travel" },
+  plasma: [{ port: "PLS-11", type: "FOUP", role: "travel" }],
+  hbond: [{ port: "HB-21", type: "FOUP", role: "travel" }],
+  anneal: [{ port: "ANN-22", type: "FOUP", role: "travel" }],
+  overlay: [{ port: "MET-23", type: "FOUP", role: "travel" }],
+  backgrind: [{ port: "BG-24", type: "FOUP", role: "travel" }],
+  mount: [{ port: "MNT-80", type: "FOUP", role: "travel" }],
+  dice: [{ port: "DIC-81", type: "FRAME", role: "travel" }],
+  diceaoi: [{ port: "AOI-82", type: "FRAME", role: "travel" }],
+  subbake: [
+    { port: "BAK-03", type: "MAG", role: "issue", zone: "SUB", sku: "substrate" },
   ],
   wos: [
-    { port: "WOS-04", type: "MAG", role: "issue", zone: "SUB", sku: "substrate" },
-    { port: "WOS-04:unit", type: "FRAME", role: "travel" },
+    { port: "WOS-04", type: "MAG", role: "follow", sku: "substrate", unlessLot: "TRAY" },
+    { port: "WOS-04:unit", type: "FRAME", role: "travel", unlessLot: "TRAY" },
+    { port: "WOS-04:out", type: "TRAY", role: "travel", onlyLot: "TRAY" },
   ],
-  ballpack: [
-    { port: "BPK-05", type: "TRAY", role: "travel" },
-  ],
+  underfill: [{ port: "UF-05", type: "TRAY", role: "travel" }],
+  ufcure: [{ port: "CUR-06", type: "TRAY", role: "travel" }],
+  warpage: [{ port: "MET-07", type: "TRAY", role: "travel" }],
+  ball: [{ port: "BGA-51", type: "TRAY", role: "travel" }],
+  reflow: [{ port: "RFW-52", type: "TRAY", role: "travel" }],
+  fluxclean: [{ port: "CLN-53", type: "TRAY", role: "travel" }],
+  ftest: [{ port: "TST-54", type: "TRAY", role: "travel" }],
+  mark: [{ port: "MRK-55", type: "TRAY", role: "travel" }],
+  pack: [{ port: "PCK-56", type: "TRAY", role: "travel" }],
 };
 
 /** After pack, the finished JEDEC tray is put away to FG. */
-export const PUTAWAY = { stationId: "ballpack", zone: "FG", port: "io:FG", type: "TRAY" };
+export const PUTAWAY = { stationId: "pack", zone: "FG", port: "io:FG", type: "TRAY" };
 
 /**
- * Job-out presentation. The lot's traveling carrier waits at this port
- * until a crane picks it up. Bond presents a FRAME (the FOUP returns to
- * INT). WoS presents a JEDEC tray (the magazine returns to SUB).
+ * Job-out presentation. The traveling carrier waits at this port until a
+ * crane picks it up. Mount converts the FOUP into a FRAME (FOUP returns to
+ * INT). WoS converts the FRAME into a tray (magazine returns to SUB). The
+ * empty frame is left at the WoS unit port; it is not a warehouse zone.
  */
 export const OUTPUT_PRESENT = {
-  diebank: { type: "FOUP", port: "DBK-02" },
-  hbond: { type: "FRAME", port: "HB-21", returnZone: "INT" },
+  iqc: { type: "FOUP", port: "IQC-11" },
+  diebank: { type: "FOUP", port: "DBK-02", markKgd: true },
+  plasma: { type: "FOUP", port: "PLS-11" },
+  hbond: { type: "FOUP", port: "HB-21" },
+  anneal: { type: "FOUP", port: "ANN-22" },
+  overlay: { type: "FOUP", port: "MET-23" },
+  backgrind: { type: "FOUP", port: "BG-24" },
+  mount: {
+    type: "FRAME",
+    port: "MNT-80",
+    convertFrom: "FOUP",
+    returnZone: "INT",
+    newSku: "cow",
+    idPrefix: "FR-",
+  },
   dice: { type: "FRAME", port: "DIC-81" },
-  wos: { type: "TRAY", port: "WOS-04:out", returnZone: "SUB" },
-  ballpack: { type: "TRAY", port: "BPK-05", sku: "finished" },
+  diceaoi: { type: "FRAME", port: "AOI-82" },
+  subbake: { type: "MAG", port: "BAK-03", keepLot: true, sku: "substrate" },
+  wos: {
+    type: "TRAY",
+    port: "WOS-04:out",
+    convertFrom: "FRAME",
+    returnSku: "substrate",
+    returnZone: "SUB",
+    retireFrame: true,
+    framePort: "WOS-04:unit",
+    newSku: "wip-tray",
+    idPrefix: "JD-",
+  },
+  underfill: { type: "TRAY", port: "UF-05" },
+  ufcure: { type: "TRAY", port: "CUR-06" },
+  warpage: { type: "TRAY", port: "MET-07" },
+  ball: { type: "TRAY", port: "BGA-51" },
+  reflow: { type: "TRAY", port: "RFW-52" },
+  fluxclean: { type: "TRAY", port: "CLN-53" },
+  ftest: { type: "TRAY", port: "TST-54" },
+  mark: { type: "TRAY", port: "MRK-55" },
+  pack: { type: "TRAY", port: "PCK-56", sku: "finished" },
 };
 
 export function portAccepts(portId, type) {
@@ -326,6 +717,7 @@ export function portAccepts(portId, type) {
 
 export function returnZoneFor(carrier) {
   if (!carrier) return null;
+  if (carrier.type === "FRAME") return null;
   if (carrier.sku === "finished" || carrier.sku === "wip-tray") return "FG";
   if (carrier.type === "FOUP") return "INT";
   if (carrier.type === "MAG") return "SUB";
@@ -395,11 +787,11 @@ export function travelDuration(distance) {
 }
 
 export function stationById(id) {
-  return STATIONS.find((s) => s.id === id) || null;
+  return FLOW.find((s) => s.id === id) || null;
 }
 
 export function stationByTool(tool) {
-  return STATIONS.find((s) => s.tool === tool) || null;
+  return FLOW.find((s) => s.tool === tool) || null;
 }
 
 export function holdForStation(stationId) {
@@ -414,16 +806,15 @@ export function planHolds(intensity) {
 
 /**
  * Morphology committed by a finished process beat.
- * `processBeatIndex` is the MES "process" beat. A later beat on this
- * station, or any later station, means the out-morph is committed.
- * An open hold never commits the station it froze.
+ * An open hold never commits the operation it froze, and therefore never
+ * commits a later morph either.
  */
 export function committedMorph(stepIndex, beatIndex, holdOpen, processBeatIndex) {
-  let morph = STATIONS[0].morphIn;
-  for (let i = 0; i < STATIONS.length; i++) {
+  let morph = FLOW[0].morphIn;
+  for (let i = 0; i < FLOW.length; i++) {
     const passed = stepIndex > i || (stepIndex === i && beatIndex > processBeatIndex && !holdOpen);
     if (!passed) break;
-    morph = STATIONS[i].morphOut;
+    morph = FLOW[i].morphOut;
   }
   return morph;
 }
@@ -439,6 +830,11 @@ export function morphIsBlocked(morph, blocksMorph) {
   return morphRank(morph) >= morphRank(blocksMorph);
 }
 
+/** The operation that first commits `morph` (morphIn !== morphOut). */
+export function opThatCommits(morph) {
+  return FLOW.find((s) => s.morphOut === morph && s.morphIn !== s.morphOut) || null;
+}
+
 export function genealogyRows(lot, morph, hold) {
   const rank = morphRank(morph);
   const rows = [{ key: "gen_source", value: `${lot.wafer} · 12 sites` }];
@@ -449,62 +845,122 @@ export function genealogyRows(lot, morph, hold) {
     rows.push({ key: "gen_logic", value: "gen_pending" });
     rows.push({ key: "gen_hbm", value: "gen_pending" });
   }
-  if (rank >= morphRank("bonded")) {
-    rows.push({ key: "gen_bond", value: `${lot.wafer}-COW` });
-  } else if (hold?.id === "overlay") {
+  if (hold?.id === "overlay") {
     rows.push({ key: "gen_bond", value: "gen_bond_offset" });
+  } else if (rank >= morphRank("bonded")) {
+    rows.push({ key: "gen_bond", value: `${lot.wafer}-COW` });
+  }
+  if (rank >= morphRank("thinned")) {
+    rows.push({ key: "gen_thin", value: "gen_thin_ok" });
   }
   if (rank >= morphRank("singulated")) {
     rows.push({ key: "gen_chip", value: `${lot.unit}-COW` });
   }
   if (rank >= morphRank("wos")) {
-    rows.push({ key: "gen_sub", value: lot.substrate });
+    const sub = hold?.id === "warpage" ? `${lot.substrate} · HOLD` : lot.substrate;
+    rows.push({ key: "gen_sub", value: sub });
     rows.push({ key: "gen_asm", value: `${lot.unit}-WOS` });
-  } else if (hold?.id === "warpage") {
-    rows.push({ key: "gen_sub", value: `${lot.substrate} · HOLD` });
   }
-  if (rank >= morphRank("packed")) {
+  if (rank >= morphRank("underfilled")) {
+    rows.push({ key: "gen_uf", value: "gen_uf_ok" });
+  } else if (hold?.id === "void") {
+    rows.push({ key: "gen_uf", value: "gen_uf_void" });
+  }
+  if (rank >= morphRank("balled")) {
     rows.push({ key: "gen_ball", value: "gen_ball_ok" });
-    rows.push({ key: "gen_unit", value: lot.unit });
   } else if (hold?.id === "void") {
     rows.push({ key: "gen_ball", value: "gen_ball_void" });
+  }
+  if (rank >= morphRank("packed")) {
+    rows.push({ key: "gen_unit", value: lot.unit });
   }
   return rows;
 }
 
+const FLOW_ORDER = [
+  "iqc", "diebank", "plasma", "hbond", "anneal", "overlay", "backgrind",
+  "mount", "dice", "diceaoi", "subbake", "wos", "underfill", "ufcure", "warpage",
+  "ball", "reflow", "fluxclean", "ftest", "mark", "pack",
+];
+
 export function assertContract() {
   const errors = [];
-  if (STATIONS.length !== 5) errors.push(`expected 5 stations, got ${STATIONS.length}`);
+  if (FLOW.length !== 21) errors.push(`expected 21 operations, got ${FLOW.length}`);
+  if (FLOW.map((s) => s.id).join(",") !== FLOW_ORDER.join(",")) errors.push("flow order drifted");
+  if (MORPHS.join(",") !== "bank,issued,bonded,thinned,singulated,wos,underfilled,balled,packed") {
+    errors.push("morph list drifted");
+  }
   const ids = new Set();
   const tools = new Set();
-  STATIONS.forEach((s, i) => {
-    if (ids.has(s.id)) errors.push(`duplicate station ${s.id}`);
+  const recipes = new Set();
+  FLOW.forEach((s, i) => {
+    if (!BAY_IDS.includes(s.bay)) errors.push(`${s.id} is not in the five bays`);
+    if (ids.has(s.id)) errors.push(`duplicate operation ${s.id}`);
     ids.add(s.id);
     if (tools.has(s.tool)) errors.push(`duplicate tool ${s.tool}`);
     tools.add(s.tool);
+    if (recipes.has(s.recipe)) errors.push(`duplicate recipe ${s.recipe}`);
+    recipes.add(s.recipe);
     for (const f of CONTRACT_FIELDS) {
       if (!(f in s.contract)) errors.push(`${s.id} missing contract.${f}`);
     }
+    if (s.duration < 2.6 || s.duration > 3.4) errors.push(`${s.id} duration ${s.duration} is outside 2.6–3.4 s`);
     if (i === 0 && s.morphIn !== "bank") errors.push("route must start at bank");
-    if (i === STATIONS.length - 1 && s.morphOut !== "packed") errors.push("route must end at packed");
-    if (i > 0 && s.morphIn !== STATIONS[i - 1].morphOut) {
-      errors.push(`${s.id} morphIn ${s.morphIn} does not follow ${STATIONS[i - 1].morphOut}`);
+    if (i === FLOW.length - 1 && s.morphOut !== "packed") errors.push("route must end at packed");
+    if (i > 0 && s.morphIn !== FLOW[i - 1].morphOut) {
+      errors.push(`${s.id} morphIn ${s.morphIn} does not follow ${FLOW[i - 1].morphOut}`);
     }
     if (!MORPHS.includes(s.morphIn) || !MORPHS.includes(s.morphOut)) {
       errors.push(`${s.id} has a morph outside MORPHS`);
     }
+    const recipe = recipeById(s.recipe);
+    if (!recipe) errors.push(`${s.id} has no recipe object`);
+    else {
+      if (recipe.op !== s.id) errors.push(`${s.recipe} is not tied to ${s.id}`);
+      if (recipe.tool !== s.tool) errors.push(`${s.recipe} is not tied to ${s.tool}`);
+      if (recipe.flow !== FLOW_ID) errors.push(`${s.recipe} is not on ${FLOW_ID}`);
+      if (!Array.isArray(recipe.params) || recipe.params.length < 3 || recipe.params.length > 6) {
+        errors.push(`${s.recipe} needs 3–6 parameters`);
+      } else {
+        for (const param of recipe.params) {
+          if (!param.name || param.value == null || !("unit" in param)) {
+            errors.push(`${s.recipe} parameter is missing name, value, or unit`);
+          }
+        }
+      }
+    }
   });
-  if (!STATIONS[2].contract.hold) {
-    /* dice hold is intentionally empty */
-  } else errors.push("dice must not grow its own hold");
-  for (const hold of Object.values(HOLDS)) {
-    const st = stationById(hold.stationId);
-    if (!st) errors.push(`hold ${hold.id} points at unknown station`);
-    else if (hold.stationId === "dice") errors.push("dice station must not own a hold");
-    if (!MORPHS.includes(hold.blocksMorph)) errors.push(`hold ${hold.id} blocks an unknown morph`);
+  for (const morph of ["issued", "bonded", "thinned", "singulated", "wos", "underfilled", "balled", "packed"]) {
+    if (!opThatCommits(morph)) errors.push(`no operation commits ${morph}`);
+  }
+  if (opThatCommits("issued")?.id !== "diebank") errors.push("issued must commit at diebank");
+  if (opThatCommits("bonded")?.id !== "hbond") errors.push("bonded must commit at hbond");
+  if (opThatCommits("thinned")?.id !== "backgrind") errors.push("thinned must commit at backgrind");
+  if (opThatCommits("singulated")?.id !== "dice") errors.push("singulated must commit at dice");
+  if (opThatCommits("wos")?.id !== "wos") errors.push("wos must commit at wos");
+  if (opThatCommits("underfilled")?.id !== "ufcure") errors.push("underfilled must commit at ufcure");
+  if (opThatCommits("balled")?.id !== "ball") errors.push("balled must commit at ball");
+  if (opThatCommits("packed")?.id !== "pack") errors.push("packed must commit at pack");
+  if (stationById("dice").contract.hold) errors.push("dice must not grow its own hold");
+  if (stationById("iqc").contract.hold) errors.push("iqc must not grow its own hold");
+  const expectHold = { kgd: "diebank", overlay: "overlay", void: "underfill", warpage: "warpage" };
+  const expectBlock = { kgd: "issued", overlay: "thinned", void: "underfilled", warpage: "balled" };
+  const expectRework = { overlay: "hbond", void: "underfill", warpage: "wos" };
+  for (const [id, stationId] of Object.entries(expectHold)) {
+    const hold = HOLDS[id];
+    if (!hold) errors.push(`missing hold ${id}`);
+    else {
+      if (hold.stationId !== stationId) errors.push(`hold ${id} is not on ${stationId}`);
+      if (hold.blocksMorph !== expectBlock[id]) errors.push(`hold ${id} blocks the wrong morph`);
+      if (!MORPHS.includes(hold.blocksMorph)) errors.push(`hold ${id} blocks an unknown morph`);
+    }
+  }
+  for (const [id, back] of Object.entries(expectRework)) {
+    const action = HOLDS[id]?.actions.find((a) => a.id === "rework");
+    if (action?.backTo !== back) errors.push(`hold ${id} rework must return to ${back}`);
   }
   const owned = new Set(Object.values(HOLDS).map((h) => h.stationId));
-  for (const s of STATIONS) {
+  for (const s of FLOW) {
     if (s.contract.hold && !owned.has(s.id)) errors.push(`${s.id} contract names a hold that is not wired`);
     if (!s.contract.hold && owned.has(s.id)) errors.push(`${s.id} has a hold the contract does not name`);
   }
@@ -516,11 +972,12 @@ export function assertContract() {
   }
   if (VEHICLE_IDS.length !== 2) errors.push("expected two overhead vehicles");
   const railIds = new Set(RAIL_NODES.map((n) => n.id));
+  if (railIds.size !== RAIL_NODES.length) errors.push("duplicate rail node");
   for (const [id, port] of Object.entries(PORTS)) {
     if (!railIds.has(port.rail)) errors.push(`port ${id} has no rail node`);
     if (!port.accept?.length) errors.push(`port ${id} accepts nothing`);
   }
-  for (const s of STATIONS) {
+  for (const s of FLOW) {
     const reqs = DOCK_REQUIREMENTS[s.id];
     if (!reqs?.length) errors.push(`${s.id} has no dock requirement`);
     if (!OUTPUT_PRESENT[s.id]) errors.push(`${s.id} has no job-out presentation`);
@@ -530,18 +987,34 @@ export function assertContract() {
     else if (Math.hypot(node.x - xz.x, node.z - xz.z) > 0.2) {
       errors.push(`${s.tool} rail node is not on the load port`);
     }
+    if (!PORTS[s.tool]) errors.push(`${s.tool} has no load port`);
   }
-  const dieReq = DOCK_REQUIREMENTS.diebank.map((r) => r.zone).sort().join(",");
-  if (dieReq !== "DBK,INT") errors.push("station 1 must issue KGD and the interposer only");
-  if (DOCK_REQUIREMENTS.diebank.some((r) => r.zone === "SUB")) errors.push("substrate must not be issued at station 1");
-  if (!DOCK_REQUIREMENTS.wos.some((r) => r.zone === "SUB" && r.type === "MAG")) {
-    errors.push("substrate magazine must be issued before WoS");
+  const incomingZones = ["iqc", "diebank"].flatMap((id) =>
+    (DOCK_REQUIREMENTS[id] || []).map((r) => r.zone).filter(Boolean)
+  );
+  if (incomingZones.includes("SUB")) errors.push("substrate must not be issued in the incoming bay");
+  if (!DOCK_REQUIREMENTS.iqc.some((r) => r.zone === "INT" && r.type === "FOUP")) {
+    errors.push("IQC must dock the interposer FOUP");
   }
-  if (PUTAWAY.zone !== "FG" || PUTAWAY.type !== "TRAY" || PUTAWAY.stationId !== "ballpack") {
+  if (!DOCK_REQUIREMENTS.diebank.some((r) => r.zone === "DBK" && r.sku === "kgd")) {
+    errors.push("diebank must issue KGD");
+  }
+  if (!DOCK_REQUIREMENTS.diebank.some((r) => r.type === "FOUP" && r.role === "travel")) {
+    errors.push("diebank must receive the interposer FOUP");
+  }
+  if (!DOCK_REQUIREMENTS.subbake.some((r) => r.zone === "SUB" && r.type === "MAG")) {
+    errors.push("substrate magazine must be issued before subbake");
+  }
+  if (DOCK_REQUIREMENTS.wos.some((r) => r.role === "issue")) {
+    errors.push("substrate is issued at subbake, not again at WoS");
+  }
+  if (PUTAWAY.zone !== "FG" || PUTAWAY.type !== "TRAY" || PUTAWAY.stationId !== "pack") {
     errors.push("finished trays put away to FG after pack");
   }
-  if (OUTPUT_PRESENT.hbond.type !== "FRAME" || OUTPUT_PRESENT.wos.type !== "TRAY") {
-    errors.push("job-out carrier presentation drifted");
+  if (OUTPUT_PRESENT.mount.type !== "FRAME" || OUTPUT_PRESENT.mount.returnZone !== "INT") {
+    errors.push("FRAME must be presented at mount, and the FOUP returns to INT");
   }
+  if (OUTPUT_PRESENT.wos.type !== "TRAY") errors.push("WoS must present a tray");
+  if (ZONES.some((z) => z.carrier === "FRAME")) errors.push("FRAME must not be a warehouse zone");
   return errors;
 }

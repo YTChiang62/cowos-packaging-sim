@@ -1,3 +1,5 @@
+import { FLOW_COPY } from "./flow-i18n.js";
+
 export const LANGS = ["zh-TW", "zh-CN", "en"];
 export const LANG_LABEL = { "zh-TW": "繁", "zh-CN": "简", en: "EN" };
 
@@ -642,6 +644,8 @@ const dict = {
     waitingCrane: "Waiting on the crane",
   },
 };
+
+for (const lang of Object.keys(FLOW_COPY)) Object.assign(dict[lang], FLOW_COPY[lang]);
 
 export function t(lang, key, vars = {}) {
   const table = dict[lang] || dict["zh-TW"];
