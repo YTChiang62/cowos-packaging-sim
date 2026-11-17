@@ -132,6 +132,7 @@ function startLot() {
   document.querySelectorAll("[data-role]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.role === state.startRole));
   });
+  plant.setAvatarRole(state.startRole);
   els.startLayer.hidden = true;
   els.doneLayer.hidden = true;
   els.holdLayer.hidden = true;
@@ -207,6 +208,7 @@ document.querySelector(".topbar").addEventListener("click", (e) => {
   if (role) {
     state.startRole = role.dataset.role;
     state.session?.setRole(role.dataset.role);
+    plant.setAvatarRole(role.dataset.role);
     document.querySelectorAll("header [data-role]").forEach((b) => {
       b.setAttribute("aria-pressed", String(b === role));
     });
@@ -220,6 +222,7 @@ els.btnLang.addEventListener("click", () => {
   plant.setTranslator((k) => t(state.lang, k), state.lang);
   renderAll(state.lang, state.session, els);
   if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
+  syncWalkHint();
 });
 
 document.getElementById("hold-actions").addEventListener("click", (e) => {
@@ -234,17 +237,50 @@ document.getElementById("tool-close").addEventListener("click", () => {
 });
 document.getElementById("btn-jump-tool").addEventListener("click", () => {
   if (state.selectedTool) {
+    if (plant.walking) plant.exitWalk({ overview: false });
     plant.setFollow(false);
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
     plant.focusTool(state.selectedTool);
   }
 });
 
+let walkHintOpen = true;
+function syncWalkHint() {
+  const el = document.getElementById("walk-hint");
+  const btn = document.getElementById("walk-hint-toggle");
+  if (!el || !btn) return;
+  el.hidden = !plant.walking;
+  el.classList.toggle("is-tucked", !walkHintOpen);
+  btn.textContent = t(state.lang, walkHintOpen ? "walkHintHide" : "walkHintShow");
+}
+document.getElementById("walk-hint-toggle").addEventListener("click", () => {
+  walkHintOpen = !walkHintOpen;
+  syncWalkHint();
+});
+plant.onWalk = (on) => {
+  document.getElementById("btn-cam-walk").setAttribute("aria-pressed", String(on));
+  if (on) {
+    document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
+    document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
+  }
+  syncWalkHint();
+};
+plant.onInspect = (id) => {
+  if (!id || !plant.walking) return;
+  state.selectedTool = id;
+  showTool(state.lang, state.session, els, id);
+};
+
 document.getElementById("btn-cam-overview").addEventListener("click", () => {
+  if (plant.walking) plant.exitWalk();
   plant.setFollow(false);
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
   document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
-  plant.focusOverview();
+  if (!plant.walking) plant.focusOverview();
+});
+document.getElementById("btn-cam-walk").addEventListener("click", () => {
+  if (plant.walking) plant.exitWalk();
+  else plant.enterWalk();
 });
 document.getElementById("btn-cam-follow").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
@@ -260,6 +296,7 @@ document.getElementById("btn-cam-crane").addEventListener("click", (e) => {
 });
 document.getElementById("btn-cam-tool").addEventListener("click", () => {
   if (!state.session) return;
+  if (plant.walking) plant.exitWalk({ overview: false });
   plant.setFollow(false);
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
   plant.focusTool(state.session.step().tool);
@@ -316,11 +353,13 @@ canvas.addEventListener("pointerup", (e) => {
   const dy = e.clientY - down.y;
   down = null;
   if (dx * dx + dy * dy > 16) return;
+  if (plant.walking && plant.pointerLocked) return;
   const id = plant.pick(e.clientX, e.clientY);
   if (id) {
     state.selectedTool = id;
     showTool(state.lang, state.session, els, id);
   }
+  if (plant.walking) plant.requestLook();
 });
 canvas.addEventListener("pointermove", (e) => plant.hover(e.clientX, e.clientY));
 
@@ -351,11 +390,15 @@ window.addEventListener("keydown", (e) => {
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
     plant.setFollow(on ? "crane" : false);
   } else if (e.key === "1") {
+    if (plant.walking) plant.exitWalk();
     plant.setFollow(false);
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
-    plant.focusOverview();
+    document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
+    if (!plant.walking) plant.focusOverview();
   } else if (e.key === "2") {
-    if (state.session) plant.focusTool(state.session.step().tool);
+    if (!state.session) return;
+    if (plant.walking) plant.exitWalk({ overview: false });
+    plant.focusTool(state.session.step().tool);
   }
 });
 
@@ -377,3 +420,5 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+window.__apex = { plant, state, els, t };

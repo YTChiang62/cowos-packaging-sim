@@ -16,6 +16,16 @@ import {
   recipeById,
 } from "../js/route.js";
 import { frame, motion, posesEqual } from "../js/morph.js";
+import {
+  PERSON_RADIUS,
+  WALK_SPAWN,
+  WalkController,
+  blockedAt,
+  nextCameraMode,
+  stockerSolid,
+  toolSolid,
+  wallSolids,
+} from "../js/walk.js";
 
 let failed = 0;
 function check(name, cond) {
@@ -557,6 +567,87 @@ divert.facility.onHold("diebank");
 check(
   "an in-flight move to another tool returns to the warehouse",
   String(divert.facility.wh.get("INT-B2").location).startsWith("bin:INT")
+);
+
+const walker = new WalkController();
+const entered = walker.enter();
+check(
+  "walk mode can be entered",
+  walker.active === true && walker.camera.mode === "walk" && walker.camera.controls === false && walker.camera.follow === false
+);
+check(
+  "the trainee starts on a walkable aisle",
+  entered.x === WALK_SPAWN.x &&
+    entered.z === WALK_SPAWN.z &&
+    !walker.blocked(entered.x, entered.z) &&
+    entered.x < -40 &&
+    entered.z > 1
+);
+const along = walker.step({ forward: 1, strafe: 0, sprint: false, yaw: walker.yaw, dt: 0.35 });
+check("a clear aisle step is accepted", along.moved === true && !walker.blocked(walker.x, walker.z));
+
+const bonder = toolSolid(FLOW.find((s) => s.tool === "HB-21").place, "HB-21");
+walker.x = (bonder.minX + bonder.maxX) / 2;
+walker.z = bonder.maxZ + PERSON_RADIUS + 0.08;
+check("the approach in front of the bonder is open", !walker.blocked(walker.x, walker.z));
+const intoTool = walker.tryMove(0, -(PERSON_RADIUS + 0.55));
+check(
+  "movement into a tool body is blocked",
+  intoTool.blocked === true && walker.z > bonder.maxZ && !blockedAt(walker.x, walker.z, walker.solids)
+);
+const beforeSlide = walker.x;
+const slide = walker.tryMove(0.85, -(PERSON_RADIUS + 0.55));
+check(
+  "the trainee slides along the tool instead of entering it",
+  slide.moved === true && walker.x !== beforeSlide && walker.z > bonder.maxZ && !walker.blocked(walker.x, walker.z)
+);
+
+const stock = stockerSolid();
+walker.x = stock.maxX + PERSON_RADIUS + 0.12;
+walker.z = 0;
+const intoStock = walker.tryMove(-(PERSON_RADIUS + 0.7), 0);
+check(
+  "movement into the stocker is blocked",
+  intoStock.blocked === true && walker.x > stock.maxX && !walker.blocked(walker.x, walker.z)
+);
+const south = wallSolids().find((wall) => wall.id === "wall-s");
+walker.x = 4;
+walker.z = south.minZ - PERSON_RADIUS - 0.12;
+const intoWall = walker.tryMove(0, PERSON_RADIUS + 0.8);
+check(
+  "movement into the outer wall is blocked",
+  intoWall.blocked === true && walker.z < south.minZ && !walker.blocked(walker.x, walker.z)
+);
+
+walker.x = bonder.ax;
+walker.z = bonder.maxZ + PERSON_RADIUS + 0.25;
+check("proximity inspect selects the hybrid bonder", walker.updateInspect() === "HB-21");
+walker.x = stock.maxX + PERSON_RADIUS + 0.2;
+walker.z = stock.az;
+check("proximity inspect selects the stocker I/O", walker.updateInspect() === "stocker");
+
+const fromFollow = nextCameraMode({ mode: "follow-lot", follow: "lot", controls: false }, "enter-walk");
+check("entering walk turns follow off and disables orbit", fromFollow.mode === "walk" && fromFollow.follow === false && fromFollow.controls === false);
+const restored = nextCameraMode(fromFollow, "exit-walk");
+check(
+  "leaving walk restores overview and enables orbit controls",
+  restored.mode === "overview" && restored.controls === true && restored.follow === false
+);
+const left = walker.exit();
+check("walk mode can be exited", walker.active === false && left.mode === "overview" && left.controls === true);
+
+const sim = new Session({ intensity: "none" });
+sim.setAuto(true);
+walker.enter();
+let craneMoved = false;
+for (let i = 0; i < 40; i++) {
+  sim.tick(0.25);
+  walker.step({ forward: 1, strafe: 0, sprint: false, yaw: walker.yaw, dt: 0.25 });
+  if (sim.facility.amhs.vehicles.some((v) => v.state !== "idle")) craneMoved = true;
+}
+check(
+  "walk mode does not pause auto or the crane",
+  sim.auto === true && sim.facility.mode === "AUTO" && craneMoved && walker.active === true
 );
 
 if (failed) {

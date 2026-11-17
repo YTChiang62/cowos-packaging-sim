@@ -130,8 +130,24 @@
     </div>
     <dl class="meta-grid">
       <div class="meta span2">
-        <dt data-i18n="toolGroup">区域</dt>
+        <dt data-i18n="toolGroup">區域</dt>
         <dd id="tool-group">—</dd>
+      </div>
+      <div class="meta">
+        <dt data-i18n="toolState">狀態</dt>
+        <dd id="tool-state">—</dd>
+      </div>
+      <div class="meta">
+        <dt data-i18n="toolCarrier">靠港載具</dt>
+        <dd id="tool-carrier">—</dd>
+      </div>
+      <div class="meta span2">
+        <dt data-i18n="toolMorph">形態</dt>
+        <dd id="tool-morph">—</dd>
+      </div>
+      <div class="meta span2">
+        <dt data-i18n="toolHold">開立 HOLD</dt>
+        <dd id="tool-hold">—</dd>
       </div>
       <div class="meta">
         <dt data-i18n="metaRecipe">配方</dt>
@@ -187,6 +203,7 @@
 
   <div class="cam-dock panel">
     <button type="button" id="btn-cam-overview" data-i18n="camOverview">總覽</button>
+    <button type="button" id="btn-cam-walk" aria-pressed="false" data-i18n="camWalk">步行參觀</button>
     <button type="button" id="btn-cam-follow" aria-pressed="false" data-i18n="camFollow">跟隨批次</button>
     <button type="button" id="btn-cam-crane" aria-pressed="false" data-i18n="camCrane">跟隨天車</button>
     <button type="button" id="btn-cam-tool" data-i18n="camTool">看當前站</button>
@@ -254,6 +271,11 @@
   </div>
 
   <div class="toast panel" id="toast" hidden></div>
+
+  <div id="walk-hint" class="walk-hint panel" hidden>
+    <p data-i18n="walkHint">WASD／方向鍵移動 · Shift 加速 · 點畫面鎖定視角 · Esc 解除 · 空白鍵仍推進批次</p>
+    <button type="button" id="walk-hint-toggle" data-i18n="walkHintHide">收起</button>
+  </div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

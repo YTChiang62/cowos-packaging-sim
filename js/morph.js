@@ -382,7 +382,10 @@ export function motion(station, t, fault = 0) {
   const needle = station === "underfill" ? (f > 0.5 ? 0.35 : (u > 0.2 && u < 0.75 ? smooth((u - 0.2) / 0.2) : 0)) : 0;
   const wheel = station === "backgrind" ? (u > 0.15 && u < 0.8 ? smooth((u - 0.15) / 0.2) : 0) : 0;
   const laser = station === "mark" ? (u > 0.25 && u < 0.8 ? 1 : 0) : 0;
-  return { pose, head, blade: bladeCue(u), lamp, pusher, table, contactor, sweep, door, needle, wheel, laser };
+  const pass = station === "underfill" || station === "ball"
+    ? Math.sin(u * Math.PI * 2)
+    : 0;
+  return { pose, head, blade: bladeCue(u), lamp, pusher, table, contactor, sweep, door, needle, wheel, laser, pass };
 }
 
 export function specForMorph(morph) {

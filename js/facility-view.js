@@ -9,6 +9,41 @@ import { carrierShell } from "./tools.js";
 
 const ZONE_COLOR = { DBK: 0xd3925a, INT: 0x3ee0c0, SUB: 0xe0a15a, FG: 0xf2d7a2 };
 const TYPE_COLOR = { FOUP: 0x1c6a62, TRAY: 0x2a241c, FRAME: 0xd5dbe2, MAG: 0xd3925a };
+const DIE_GEO = new THREE.BoxGeometry(0.07, 0.03, 0.05);
+const WAFER_GEO = new THREE.CylinderGeometry(0.1, 0.1, 0.012, 12);
+const STRIP_GEO = new THREE.BoxGeometry(0.42, 0.018, 0.16);
+const PIP_GEO = new THREE.SphereGeometry(0.02, 6, 5);
+const DIE_MAT = mat(0xd7ebe7, { roughness: 0.4, metalness: 0.2 });
+const HBM_MAT = mat(0x3ee0c0, { roughness: 0.35, metalness: 0.3, emissive: 0x0a3a32, emissiveIntensity: 0.3 });
+const WAFER_MAT = mat(0xc9d4d8, { roughness: 0.16, metalness: 0.75 });
+const STRIP_MAT = mat(0xd3925a, { roughness: 0.42, metalness: 0.4 });
+const PIP_MAT = mat(0xf2d48a, { metalness: 0.8, roughness: 0.2 });
+
+function dressBin(proxy, zoneId) {
+  proxy.castShadow = false;
+  const add = (geo, material, x, y, z, rotX = 0) => {
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.position.set(x, y, z);
+    mesh.rotation.x = rotX;
+    mesh.castShadow = false;
+    proxy.add(mesh);
+  };
+  if (zoneId === "DBK") {
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        add((c + r) % 3 === 0 ? DIE_GEO : DIE_GEO, (c + r) % 3 === 0 ? HBM_MAT : DIE_MAT, -0.18 + c * 0.12, 0.14, -0.1 + r * 0.1);
+      }
+    }
+  } else if (zoneId === "INT") {
+    for (let i = 0; i < 4; i++) add(WAFER_GEO, WAFER_MAT, 0, 0.08, -0.12 + i * 0.08, Math.PI / 2);
+  } else if (zoneId === "SUB") {
+    for (let i = 0; i < 4; i++) add(STRIP_GEO, STRIP_MAT, 0, 0.06 + i * 0.03, 0);
+  } else if (zoneId === "FG") {
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) add(PIP_GEO, PIP_MAT, -0.16 + c * 0.1, 0.14, -0.1 + r * 0.1);
+    }
+  }
+}
 
 function sprite(text, color, w = 256, h = 64) {
   const cv = document.createElement("canvas");
@@ -39,8 +74,12 @@ function buildStocker() {
   box(group, 0.16, 4.5, 4.2, shell, 3.55, 2.4, 0);
   box(group, 7.1, 0.16, 4.2, shell, 0.05, 4.55, 0);
   box(group, 7.0, 4.3, 0.12, mat(0x142026, { roughness: 0.35, metalness: 0.4 }), 0.05, 2.35, -2.05);
-  const glass = mat(0x7fdad0, { transparent: true, opacity: 0.14, roughness: 0.08, metalness: 0.2 });
-  box(group, 6.6, 3.5, 0.06, glass, 0.1, 2.4, 2.05);
+  const glass = mat(0x7fdad0, { transparent: true, opacity: 0.1, roughness: 0.08, metalness: 0.2 });
+  const glassMesh = box(group, 6.6, 3.5, 0.06, glass, 0.1, 2.4, 2.05);
+  glassMesh.name = "stocker-glass";
+  const interior = new THREE.PointLight(0xfff1d6, 5, 7);
+  interior.position.set(1.2, 2.4, 0.2);
+  group.add(interior);
 
   const bins = new Map();
   ZONES.forEach((zone, zi) => {
@@ -60,6 +99,7 @@ function buildStocker() {
         emissiveIntensity: 0.08,
       });
       const proxy = box(group, 0.72, 0.22, 0.48, proxyMat, x, y + 0.18, -0.2);
+      dressBin(proxy, zone.id);
       const key = `bin:${zone.id}:${slot}`;
       bins.set(key, { mesh: proxy, mat: proxyMat, color });
     });
