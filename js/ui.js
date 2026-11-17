@@ -25,6 +25,10 @@ export function bindUI() {
     toolRecipe: document.getElementById("tool-recipe"),
     toolParams: document.getElementById("tool-params"),
     toolLot: document.getElementById("tool-lot"),
+    toolState: document.getElementById("tool-state"),
+    toolCarrier: document.getElementById("tool-carrier"),
+    toolMorph: document.getElementById("tool-morph"),
+    toolHold: document.getElementById("tool-hold"),
     toolContract: document.getElementById("tool-contract"),
     holdLayer: document.getElementById("hold-layer"),
     holdKicker: document.getElementById("hold-kicker"),
@@ -185,10 +189,46 @@ export function renderHold(lang, session, els) {
   }
 }
 
+function dockedHere(session, toolId) {
+  const carriers = session?.facility?.snapshot?.().carriers || [];
+  return carriers.filter((c) => c.location === `tool:${toolId}` || String(c.location).startsWith(`port:${toolId}`));
+}
+
+function writeLive(els, lang, { state, carrier, morph, hold, lot }) {
+  if (els.toolState) els.toolState.textContent = state;
+  if (els.toolCarrier) els.toolCarrier.textContent = carrier;
+  if (els.toolMorph) els.toolMorph.textContent = morph;
+  if (els.toolHold) els.toolHold.textContent = hold;
+  if (els.toolLot) els.toolLot.textContent = lot;
+}
+
 export function showTool(lang, session, els, toolId) {
   const step = STEPS.find((s) => s.tool === toolId);
   els.toolDock.classList.add("is-on");
+  if (toolId === "stocker") {
+    const carriers = session?.facility?.snapshot?.().carriers || [];
+    const atIo = carriers.filter((c) => String(c.location).startsWith("io:"));
+    els.toolName.textContent = t(lang, "stockerName");
+    els.toolGroup.textContent = t(lang, "whKicker");
+    els.toolRecipe.textContent = "—";
+    if (els.toolParams) els.toolParams.replaceChildren();
+    if (els.toolContract) {
+      els.toolContract.textContent = ["DBK", "INT", "SUB", "FG"].map((id) => {
+        const n = carriers.filter((c) => c.zone === id && c.qty > 0 && String(c.location).startsWith("bin:")).length;
+        return `${id} ${n}`;
+      }).join(" · ");
+    }
+    writeLive(els, lang, {
+      state: t(lang, "state_idle"),
+      carrier: atIo.length ? atIo.map((c) => `${c.id} ${c.type}`).join(" · ") : t(lang, "toolCarrierNone"),
+      morph: "—",
+      hold: session?.hold ? t(lang, `hold_${session.hold.id}_title`) : t(lang, "toolHoldNone"),
+      lot: session ? session.lot.id : "—",
+    });
+    return;
+  }
   els.toolName.textContent = toolId;
+  const onTool = !!(session && session.step().tool === toolId);
   if (step) {
     els.toolGroup.textContent = t(lang, "bay_" + step.bay);
     els.toolRecipe.textContent = step.recipe;
@@ -202,8 +242,20 @@ export function showTool(lang, session, els, toolId) {
     if (els.toolParams) els.toolParams.replaceChildren();
     if (els.toolContract) els.toolContract.textContent = "";
   }
-  const onThis = session && session.step().tool === toolId && session.status !== "QUEUE";
-  els.toolLot.textContent = onThis ? session.lot.id : t(lang, "idleTool");
+  const docked = dockedHere(session, toolId);
+  let stateKey = "state_idle";
+  if (onTool && session.hold) stateKey = "state_HOLD";
+  else if (onTool && session.busy) stateKey = "state_RUN";
+  else if (onTool) stateKey = "state_" + session.status;
+  writeLive(els, lang, {
+    state: t(lang, stateKey),
+    carrier: docked.length
+      ? docked.map((c) => `${c.type}${c.lotId ? " · " + c.lotId : ""}`).join(" · ")
+      : t(lang, "toolCarrierNone"),
+    morph: onTool ? t(lang, "morph_" + session.morph) : "—",
+    hold: onTool && session.hold ? t(lang, `hold_${session.hold.id}_title`) : t(lang, "toolHoldNone"),
+    lot: onTool && session.status !== "QUEUE" ? session.lot.id : t(lang, "idleTool"),
+  });
 }
 
 export function hideTool(els) {

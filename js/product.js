@@ -48,6 +48,20 @@ export class Workpiece {
       box(this.fiducials, 0.06, 0.012, 0.06, this.fidMat, x, 0.035, z);
     }
     this.wafer.add(this.fiducials);
+    this.siteMat = fadeMat(0x9fd4ff, { emissive: 0x245868, emissiveIntensity: 0.28, opacity: 0.55, roughness: 0.35, metalness: 0.2 });
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const site = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.006, 0.22), this.siteMat);
+        site.position.set(-0.32 + c * 0.32, 0.03, -0.28 + r * 0.28);
+        site.castShadow = false;
+        this.wafer.add(site);
+      }
+    }
+    this.grindMat = fadeMat(0xe7eef2, { metalness: 0.72, roughness: 0.28, opacity: 0 });
+    this.grind = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.018, 6, 28), this.grindMat);
+    this.grind.rotation.x = Math.PI / 2;
+    this.grind.position.y = 0.045;
+    this.wafer.add(this.grind);
     g.add(this.wafer);
 
     this.tapeMat = fadeMat(0x2a4d8a, { roughness: 0.55, metalness: 0.05, opacity: 0.8 });
@@ -61,6 +75,14 @@ export class Workpiece {
     this.kerfMat = mat(0xd7f4ff, { emissive: 0x9fd4ff, emissiveIntensity: 0.9, roughness: 0.2, metalness: 0.1 });
     this.kerfX = box(g, 1.9, 0.02, 0.035, this.kerfMat, 0, 0.09, 0);
     this.kerfZ = box(g, 0.035, 0.02, 1.9, this.kerfMat, 0, 0.095, 0);
+    this.streetMat = fadeMat(0xd7f4ff, { emissive: 0x9fd4ff, emissiveIntensity: 0.45, roughness: 0.25, opacity: 0 });
+    this.streets = new THREE.Group();
+    for (let i = -2; i <= 2; i++) {
+      if (i === 0) continue;
+      box(this.streets, 1.55, 0.008, 0.012, this.streetMat, 0, 0.085, i * 0.22);
+      box(this.streets, 0.012, 0.008, 1.55, this.streetMat, i * 0.22, 0.087, 0);
+    }
+    g.add(this.streets);
 
     this.pocketMat = fadeMat(0x4a3a28, { roughness: 0.7, metalness: 0.15 });
     this.pockets = new THREE.Group();
@@ -76,6 +98,30 @@ export class Workpiece {
       return p;
     });
     g.add(this.pockets);
+
+    this.kgdMat = fadeMat(0xd7ebe7, { roughness: 0.4, metalness: 0.22 });
+    this.kgdHbm = fadeMat(0x3ee0c0, { roughness: 0.35, metalness: 0.3, emissive: 0x0a3a32, emissiveIntensity: 0.3 });
+    this.kgdTrayMat = fadeMat(0x1a140e, { roughness: 0.55, metalness: 0.25 });
+    this.kgdTray = new THREE.Group();
+    box(this.kgdTray, 0.78, 0.03, 0.56, this.kgdTrayMat, 0.95, 0.03, -0.05);
+    this.kgdDice = [];
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        const die = box(
+          this.kgdTray,
+          c === 0 && r === 1 ? 0.14 : 0.1,
+          0.025,
+          0.08,
+          (c + r) % 3 === 0 ? this.kgdHbm : this.kgdMat,
+          0.68 + c * 0.16,
+          0.055,
+          -0.22 + r * 0.14,
+        );
+        die.castShadow = false;
+        this.kgdDice.push(die);
+      }
+    }
+    g.add(this.kgdTray);
 
     this.stack = new THREE.Group();
     this.couponMat = fadeMat(0x9aabb4, { metalness: 0.65, roughness: 0.28 });
@@ -93,16 +139,37 @@ export class Workpiece {
     halo.rotation.x = Math.PI / 2;
     halo.position.y = 0.03;
     this.bond.add(halo);
+    this.bumpMat = mat(0xe6c36a, { metalness: 0.82, roughness: 0.22 });
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        const bump = new THREE.Mesh(new THREE.SphereGeometry(0.016, 6, 5), this.bumpMat);
+        bump.position.set(-0.12 + c * 0.08, 0.012, -0.09 + r * 0.06);
+        bump.castShadow = false;
+        this.bond.add(bump);
+      }
+    }
     this.stack.add(this.bond);
     this.logicMat = mat(0xd7ebe7, { roughness: 0.38, metalness: 0.28 });
     this.logic = box(this.stack, 0.4, 0.075, 0.34, this.logicMat, 0, 0, 0);
+    const trace = mat(0x8aa3a8, { metalness: 0.65, roughness: 0.28 });
+    for (let i = 0; i < 3; i++) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.006, 0.018), trace);
+      line.position.set(0, 0.042, -0.08 + i * 0.08);
+      line.castShadow = false;
+      this.logic.add(line);
+    }
     this.hbmMat = mat(0x3ee0c0, { roughness: 0.35, metalness: 0.35, emissive: 0x0a3a32, emissiveIntensity: 0.35 });
     this.hbms = [0, 1, 2, 3].map(() => box(this.stack, 0.3, 0.055, 0.2, this.hbmMat, 0, 0, 0));
     this.filletMat = fadeMat(0x8a6244, { roughness: 0.28, metalness: 0.08, emissive: 0x4a3018, emissiveIntensity: 0.2 });
-    this.fillet = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.05, 8, 28), this.filletMat);
-    this.fillet.rotation.x = Math.PI / 2;
-    this.fillet.position.y = 0.04;
+    this.fillet = new THREE.Group();
+    this.filletSides = [
+      box(this.fillet, 0.5, 0.045, 0.07, this.filletMat, 0, 0.05, 0.24),
+      box(this.fillet, 0.5, 0.045, 0.07, this.filletMat, 0, 0.05, -0.24),
+      box(this.fillet, 0.07, 0.045, 0.42, this.filletMat, 0.26, 0.05, 0),
+      box(this.fillet, 0.07, 0.045, 0.42, this.filletMat, -0.26, 0.05, 0),
+    ];
     this.stack.add(this.fillet);
+    this.markPlate = box(this.stack, 0.2, 0.008, 0.055, mat(0x1a1c1e, { roughness: 0.4, metalness: 0.2 }), 0, 0.16, 0.08);
     this.mark = makeMark("HBX-100");
     this.stack.add(this.mark);
     g.add(this.stack);
@@ -128,6 +195,12 @@ export class Workpiece {
     this.subSeg = [-0.58, 0, 0.58].map((x) => box(this.sub, 0.58, 0.1, 1.2, this.subMat, x, 0.08, 0));
     for (let i = 0; i < 5; i++) {
       box(this.sub, 0.08, 0.02, 0.1, mat(0xf0d2a4, { metalness: 0.6, roughness: 0.3 }), -0.7 + i * 0.18, 0.135, 0.66);
+    }
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 6; c++) {
+        const pad = box(this.sub, 0.06, 0.012, 0.05, this.subMat, -0.55 + c * 0.2, 0.14, -0.4 + r * 0.22);
+        pad.castShadow = false;
+      }
     }
     g.add(this.sub);
 
@@ -163,7 +236,32 @@ export class Workpiece {
     const pocket = mat(0x0c1014, { roughness: 0.6, metalness: 0.2 });
     pocket.userData.fade = true;
     pocket.transparent = true;
-    box(this.tray, 0.7, 0.02, 0.7, pocket, 0, 0.08, 0);
+    const miniMat = {
+      sub: fadeMat(0xd3925a, { roughness: 0.42, metalness: 0.4 }),
+      die: fadeMat(0xd7ebe7, { roughness: 0.4, metalness: 0.25 }),
+      ball: fadeMat(0xf2d48a, { metalness: 0.8, roughness: 0.2 }),
+    };
+    this.miniMat = miniMat;
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        const x = (c - 1.5) * 0.46;
+        const z = (r - 1) * 0.4;
+        box(this.tray, 0.32, 0.015, 0.28, pocket, x, 0.08, z);
+        const heroPocket = Math.abs(x) < 0.3 && Math.abs(z) < 0.25;
+        if (heroPocket) continue;
+        const unit = new THREE.Group();
+        unit.position.set(x, 0.1, z);
+        box(unit, 0.22, 0.025, 0.2, miniMat.sub, 0, 0, 0);
+        box(unit, 0.12, 0.03, 0.1, miniMat.die, 0, 0.03, 0);
+        for (const [bx, bz] of [[-0.06, -0.05], [0.06, -0.05], [-0.06, 0.05], [0.06, 0.05]]) {
+          const ball = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 5), miniMat.ball);
+          ball.position.set(bx, -0.01, bz);
+          ball.castShadow = false;
+          unit.add(ball);
+        }
+        this.tray.add(unit);
+      }
+    }
     g.add(this.tray);
 
     this.caption = makeCaption();
@@ -187,11 +285,15 @@ export class Workpiece {
     const thin = pose.thin || 0;
     this.wafer.scale.set(ws, Math.max(0.22, ws * (1 - thin * 0.72)), ws);
     this.wafer.visible = fadeMaterial(this.waferMat, pose.wafer.op);
+    fadeMaterial(this.siteMat, pose.wafer.op * 0.65);
+    this.grind.visible = fadeMaterial(this.grindMat, (pose.thin || 0) * pose.wafer.op);
     this.ring.visible = fadeMaterial(this.ringMat, pose.ring);
     this.fiducials.visible = fadeMaterial(this.fidMat, pose.fiducial);
 
     this.tape.visible = fadeMaterial(this.tapeMat, pose.tapeOp * hideScenery);
     this.frame.visible = fadeMaterial(this.frameMat, pose.frameOp * hideScenery);
+    const street = pose.tapeOp * hideScenery * (0.3 + 0.7 * Math.max(pose.kerfX, pose.kerfZ, pose.cloneOp));
+    this.streets.visible = fadeMaterial(this.streetMat, street);
 
     this.kerfX.visible = !compact && pose.kerfX > 0.03;
     this.kerfZ.visible = !compact && pose.kerfZ > 0.03;
@@ -199,6 +301,11 @@ export class Workpiece {
     this.kerfZ.scale.set(1, 1, Math.max(0.001, pose.kerfZ));
 
     this.pockets.visible = fadeMaterial(this.pocketMat, pose.pockets * hideScenery);
+    const kgd = pose.pockets * (1 - Math.min(1, pose.bond.op)) * hideScenery;
+    const showKgd = fadeMaterial(this.kgdTrayMat, kgd);
+    fadeMaterial(this.kgdMat, kgd);
+    fadeMaterial(this.kgdHbm, kgd);
+    this.kgdTray.visible = showKgd;
     if (pose.alarm > 0.5 && pose.pockets > 0.6) {
       this.pocketMat.emissive.setHex(0xff6b7a);
       this.pocketMat.emissiveIntensity = 0.55;
@@ -220,11 +327,14 @@ export class Workpiece {
     if (this.bondGlowMat) this.bondGlowMat.emissiveIntensity = 0.75 + (pose.bondGlow || 0) * 1.35;
     const fillet = pose.fillet || 0;
     this.fillet.visible = fadeMaterial(this.filletMat, fillet);
-    this.fillet.scale.setScalar(0.55 + fillet * 0.55);
+    this.fillet.scale.setScalar(0.72 + fillet * 0.4);
+    if (this.filletSides[0]) this.filletSides[0].scale.x = Math.max(0.18, 1 - (pose.voidS || 0) * 0.8);
     this.filletMat.roughness = 0.22 + (pose.filletCure || 0) * 0.5;
     this.filletMat.emissiveIntensity = fillet * (0.12 + (pose.filletCure || 0) * 0.45);
     this.mark.visible = (pose.mark || 0) > 0.35;
-    this.mark.position.set(pose.logic.x, pose.logic.y + 0.08, pose.logic.z);
+    this.markPlate.visible = this.mark.visible;
+    this.mark.position.set(pose.logic.x, pose.logic.y + 0.1, pose.logic.z + 0.08);
+    this.markPlate.position.set(pose.logic.x, pose.logic.y + 0.05, pose.logic.z + 0.08);
     this.coupon.visible = fadeMaterial(this.couponMat, pose.couponOp);
     if (pose.ring > 0.45) {
       this.logicMat.emissive.setHex(0x8a2030);
@@ -275,11 +385,13 @@ export class Workpiece {
     this.tray.position.set(pose.trayX, 0, 0);
     const trayOn = fadeMaterial(this.trayMat, pose.trayOp * hideScenery);
     this.tray.visible = trayOn;
+    const trayFade = pose.trayOp * hideScenery;
     this.tray.traverse((obj) => {
       if (obj.material?.userData?.fade && obj.material !== this.trayMat) {
-        fadeMaterial(obj.material, pose.trayOp * hideScenery);
+        fadeMaterial(obj.material, trayFade);
       }
     });
+    for (const material of Object.values(this.miniMat)) fadeMaterial(material, trayFade);
 
     this.caption.visible = !compact && !!this._caption;
   }

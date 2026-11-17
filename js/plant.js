@@ -6,6 +6,8 @@ import { motion, smooth, specForMorph } from "./morph.js";
 import { Workpiece } from "./product.js";
 import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
+import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
+import { WalkController } from "./walk.js";
 
 const BAYS = [
   { id: "incoming", x: -36.75, z: -18, w: 16, d: 12, color: 0x3a2a1c },
@@ -200,6 +202,14 @@ export class Plant {
     this.controls.target.set(-6, 1.2, 0);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
+    this.walking = false;
+    this.walker = new WalkController();
+    this.pointerLocked = false;
+    this._walkPhase = 0;
+    this._lastInspect = null;
+    this._keys = new Set();
+    this.onInspect = null;
+    this.onWalk = null;
 
     this._buildWorld();
     this._buildBays();
@@ -216,8 +226,141 @@ export class Plant {
     }, this.tools, 1, null);
     this.workpiece = new Workpiece();
     this.scene.add(this.workpiece.group);
+    this.avatar = buildAvatar("MFG");
+    this.scene.add(this.avatar);
+    this.inspectRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.74, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0x3ee0c0,
+        transparent: true,
+        opacity: 0.45,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    this.inspectRing.rotation.x = -Math.PI / 2;
+    this.inspectRing.visible = false;
+    this.scene.add(this.inspectRing);
+    this._bindWalkInput();
     this.showLot("bank", STATIONS[0].tool, "FOUP");
     this.resize();
+  }
+
+  setAvatarRole(role) {
+    setAvatarRole(this.avatar, role);
+  }
+
+  enterWalk() {
+    if (this.walking) return;
+    this._camTween = null;
+    const pose = this.walker.enter();
+    this.walking = true;
+    this.follow = false;
+    this.controls.enabled = false;
+    this.avatar.visible = true;
+    this.avatar.position.set(pose.x, 0, pose.z);
+    this.avatar.rotation.y = pose.yaw;
+    this._lastInspect = null;
+    this.canvas.style.cursor = "crosshair";
+    this.onWalk?.(true);
+  }
+
+  exitWalk({ overview = true } = {}) {
+    if (!this.walking && !this.walker.active) return;
+    const cam = this.walker.exit();
+    this.walking = false;
+    this.follow = cam.follow;
+    this.avatar.visible = false;
+    this.inspectRing.visible = false;
+    this._lastInspect = null;
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.pointerLocked = false;
+    this.canvas.style.cursor = "";
+    this.onWalk?.(false);
+    if (overview) this.focusOverview();
+    else this.controls.enabled = cam.controls && !this.follow;
+  }
+
+  requestLook() {
+    if (!this.walking || document.pointerLockElement === this.canvas) return;
+    this.canvas.requestPointerLock?.();
+  }
+
+  _bindWalkInput() {
+    const typing = (e) => e.target?.matches?.("input, textarea, select");
+    const moveKey = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+    this._onKeyDown = (e) => {
+      if (typing(e)) return;
+      this._keys.add(e.code);
+      if (this.walking && moveKey.has(e.code)) e.preventDefault();
+    };
+    this._onKeyUp = (e) => this._keys.delete(e.code);
+    this._onMouse = (e) => {
+      if (!this.walking || document.pointerLockElement !== this.canvas) return;
+      this.walker.yaw -= e.movementX * 0.0022;
+      this.walker.pitch = Math.max(-0.42, Math.min(0.28, this.walker.pitch - e.movementY * 0.0016));
+    };
+    this._onLock = () => {
+      this.pointerLocked = document.pointerLockElement === this.canvas;
+      if (this.walking) this.canvas.style.cursor = this.pointerLocked ? "none" : "crosshair";
+    };
+    window.addEventListener("keydown", this._onKeyDown);
+    window.addEventListener("keyup", this._onKeyUp);
+    window.addEventListener("mousemove", this._onMouse);
+    window.addEventListener("blur", () => this._keys.clear());
+    document.addEventListener("pointerlockchange", this._onLock);
+  }
+
+  _driveWalk(dt) {
+    let forward = 0;
+    let strafe = 0;
+    if (this._keys.has("KeyW") || this._keys.has("ArrowUp")) forward += 1;
+    if (this._keys.has("KeyS") || this._keys.has("ArrowDown")) forward -= 1;
+    if (this._keys.has("KeyD") || this._keys.has("ArrowRight")) strafe += 1;
+    if (this._keys.has("KeyA") || this._keys.has("ArrowLeft")) strafe -= 1;
+    const sprint = this._keys.has("ShiftLeft") || this._keys.has("ShiftRight");
+    const moving = forward !== 0 || strafe !== 0;
+    this.walker.step({ forward, strafe, sprint, yaw: this.walker.yaw, dt });
+    this.avatar.position.set(this.walker.x, 0, this.walker.z);
+    this.avatar.rotation.y = this.walker.yaw;
+    this._walkPhase += dt * (moving ? (sprint ? 11 : 7.5) : 1.6);
+    poseAvatar(this.avatar, this._walkPhase, moving);
+    const id = this.walker.updateInspect();
+    this._highlightInspect(id);
+    if (id !== this._lastInspect) {
+      this._lastInspect = id;
+      this.onInspect?.(id);
+    }
+    const yaw = this.walker.yaw;
+    const fx = -Math.sin(yaw);
+    const fz = -Math.cos(yaw);
+    let back = 3.35;
+    let cx = this.walker.x - fx * back;
+    let cz = this.walker.z - fz * back;
+    if (this.walker.blocked(cx, cz)) {
+      back = 1.9;
+      cx = this.walker.x - fx * back;
+      cz = this.walker.z - fz * back;
+    }
+    const lookY = 1.05 + Math.sin(this.walker.pitch) * 0.85;
+    this.camera.position.set(cx, 2.15, cz);
+    this.controls.target.set(this.walker.x + fx * 2.5, lookY, this.walker.z + fz * 2.5);
+    this.camera.lookAt(this.controls.target);
+  }
+
+  _highlightInspect(id) {
+    if (!id) {
+      this.inspectRing.visible = false;
+      return;
+    }
+    const solid = this.walker.solids.find((entry) => entry.id === id);
+    if (!solid) {
+      this.inspectRing.visible = false;
+      return;
+    }
+    this.inspectRing.visible = true;
+    this.inspectRing.position.set(solid.ax, 0.07, solid.az);
+    this.inspectRing.material.opacity = 0.32 + Math.sin(this.t * 4) * 0.12;
   }
 
   _aspect() {
@@ -401,8 +544,8 @@ export class Plant {
     const rim = new THREE.DirectionalLight(0x9fd4ff, 0.22);
     rim.position.set(-40, 18, 30);
     this.scene.add(rim);
-    const stockerLight = new THREE.PointLight(0xf0c08a, 8, 22);
-    stockerLight.position.set(-46, 4.2, 0);
+    const stockerLight = new THREE.PointLight(0xf0c08a, 14, 18);
+    stockerLight.position.set(-46.2, 3.2, 6.2);
     this.scene.add(stockerLight);
 
     const floor = new THREE.Mesh(
@@ -615,9 +758,10 @@ export class Plant {
   }
 
   setFollow(on) {
+    if (this.walking && on) this.exitWalk({ overview: false });
     if (on === "crane" || on === "lot") this.follow = on;
     else this.follow = on ? "lot" : false;
-    this.controls.enabled = !this.follow;
+    this.controls.enabled = !this.follow && !this.walking;
   }
 
   focusOverview() {
@@ -635,7 +779,7 @@ export class Plant {
 
   focusWork(toolId) {
     const rec = this.tools.get(toolId);
-    if (!rec) return;
+    if (!rec || this.walking) return;
     this.follow = false;
     this.controls.enabled = true;
     rec.group.updateWorldMatrix(true, true);
@@ -687,6 +831,10 @@ export class Plant {
   }
 
   hover(clientX, clientY) {
+    if (this.walking) {
+      this.canvas.style.cursor = this.pointerLocked ? "none" : "crosshair";
+      return null;
+    }
     const id = this.pick(clientX, clientY);
     this.canvas.style.cursor = id ? "pointer" : "grab";
     return id;
@@ -816,7 +964,9 @@ export class Plant {
     this.t += dt;
     const scaled = dt * speed;
 
-    if (this._camTween) {
+    if (this.walking) {
+      this._driveWalk(dt);
+    } else if (this._camTween) {
       const tw = this._camTween;
       tw.acc += dt;
       const k = smooth(Math.min(1, tw.acc / tw.dur));
@@ -865,6 +1015,9 @@ export class Plant {
         rec.point.intensity = 1.5 + Math.sin(this.t * 6) * 1.1;
       } else if (rec.status === "RUN") {
         rec.lights.grn.emissiveIntensity = 0.7 + Math.sin(this.t * 3) * 0.35;
+      }
+      if (this.walking && rec.id === this.walker.inspectId) {
+        rec.point.intensity = Math.max(rec.point.intensity, 2.1);
       }
       const camY = this.camera.position.y;
       const labelOpacity = camY > 22 ? Math.max(0, 1 - (camY - 22) / 10) : 1;

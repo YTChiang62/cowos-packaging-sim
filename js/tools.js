@@ -120,6 +120,171 @@ function ovenBody(group, chuck, parts, glow) {
   box(chuck, 1.15, 0.05, 0.8, mat(glow, { emissive: glow, emissiveIntensity: 0.25, roughness: 0.35 }), 0, 0.06, 0);
 }
 
+function quiet(mesh) {
+  if (!mesh) return mesh;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  return mesh;
+}
+
+function pipe(parent, x, y, z, h, material = STEEL) {
+  const mesh = quiet(cyl(parent, 0.025, 0.025, h, material, x, y, z, 8));
+  return mesh;
+}
+
+/** Extra silhouette inside the existing footprint so each tool reads up close. */
+function dressTool(group, chuck, parts, station) {
+  const id = station.id;
+  if (id === "iqc") {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 8, 24), STEEL);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 0.22, 0);
+    quiet(ring);
+    if (parts.sweep) parts.sweep.add(ring);
+    quiet(box(group, 0.28, 0.55, 0.22, BODY, -0.95, 0.7, 0.35));
+    for (let i = 0; i < 4; i++) {
+      const wafer = quiet(cyl(group, 0.1, 0.1, 0.012, CERAMIC, -0.95, 0.5 + i * 0.1, 0.35, 16));
+      wafer.rotation.x = Math.PI / 2;
+    }
+  } else if (id === "diebank") {
+    const die = mat(0xd7ebe7, { roughness: 0.4, metalness: 0.2 });
+    const hbm = mat(0x3ee0c0, { roughness: 0.35, metalness: 0.3, emissive: 0x0a3a32, emissiveIntensity: 0.35 });
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        quiet(box(group, 0.12, 0.03, 0.09, (c + r) % 3 === 0 ? hbm : die, -0.48 + c * 0.16, 1.58, -0.78 + r * 0.12));
+      }
+    }
+  } else if (id === "plasma") {
+    quiet(cyl(group, 0.28, 0.28, 0.04, STEEL, 0.05, 1.42, -0.25, 20));
+    quiet(cyl(group, 0.28, 0.28, 0.04, COPPER, 0.05, 0.95, -0.25, 20));
+    const rotor = new THREE.Group();
+    rotor.position.set(0.05, 1.18, -0.25);
+    quiet(cyl(rotor, 0.16, 0.16, 0.03, mat(0xd7c4ff, { emissive: 0x6a3ad0, emissiveIntensity: 0.4 }), 0, 0, 0, 16));
+    group.add(rotor);
+    parts.rotor = rotor;
+    pipe(group, -0.85, 1.15, -0.7, 0.7);
+    quiet(box(group, 0.28, 0.32, 0.22, BODY, -0.95, 0.85, -0.55));
+  } else if (id === "hbond") {
+    const heater = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.02, 6, 24), COPPER);
+    heater.rotation.x = Math.PI / 2;
+    heater.position.y = 0.07;
+    quiet(heater);
+    chuck.add(heater);
+    quiet(box(group, 0.16, 0.9, 0.7, BODY, -1.05, 1.15, -0.15));
+    quiet(box(group, 0.16, 0.9, 0.7, BODY, 1.05, 1.15, -0.15));
+  } else if (id === "anneal") {
+    const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.03, 8, 20), STEEL);
+    mouth.position.set(0.05, 1.15, 0.38);
+    quiet(mouth);
+    group.add(mouth);
+    quiet(cyl(group, 0.08, 0.08, 0.55, mat(0x2a3a44, { roughness: 0.4, metalness: 0.45 }), -1.05, 0.7, -0.2, 12));
+    pipe(group, -1.05, 1.15, -0.2, 0.4);
+  } else if (id === "overlay") {
+    for (const [x, z] of [[-0.12, 0.1], [0.12, 0.1], [0, -0.08]]) {
+      quiet(cyl(group, 0.045, 0.06, 0.16, STEEL, 0.55 + x, 1.95, -0.35 + z, 10));
+    }
+    quiet(box(group, 0.42, 0.08, 0.28, CERAMIC, 0.55, 2.02, -0.35));
+  } else if (id === "backgrind") {
+    const chuckDisc = quiet(cyl(chuck, 0.55, 0.55, 0.05, mat(0x203038, { roughness: 0.35, metalness: 0.6 }), 0, 0.08, 0, 24));
+    chuckDisc.castShadow = true;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      quiet(cyl(chuck, 0.035, 0.035, 0.02, DARK, Math.cos(a) * 0.28, 0.12, Math.sin(a) * 0.28, 8));
+    }
+    const guard = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.02, 6, 18, Math.PI), STEEL);
+    guard.rotation.y = Math.PI / 2;
+    guard.position.set(0, 0.7, 0);
+    quiet(guard);
+    chuck.add(guard);
+  } else if (id === "mount") {
+    const uv = mat(0x9eb6ff, { emissive: 0x4458c8, emissiveIntensity: 0.45, roughness: 0.3 });
+    quiet(box(chuck, 0.7, 0.04, 0.08, uv, 0.15, 0.42, 0.15));
+    const roller = new THREE.Group();
+    quiet(cyl(roller, 0.12, 0.12, 0.5, STEEL, 0, 0, 0, 12));
+    roller.rotation.z = Math.PI / 2;
+    roller.position.set(0.15, 0.55, -0.2);
+    chuck.add(roller);
+  } else if (id === "dice") {
+    quiet(cyl(chuck, 0.02, 0.012, 0.22, STEEL, 0.28, 0.55, 0.15, 8));
+    quiet(box(group, 1.15, 0.08, 0.7, GLASS, 0, 1.55, 0.15));
+    quiet(box(chuck, 0.08, 0.08, 0.08, COPPER, -0.55, 0.2, -0.4));
+  } else if (id === "diceaoi") {
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.02, 6, 24), STEEL);
+    frame.rotation.x = Math.PI / 2;
+    frame.position.y = 0.08;
+    quiet(frame);
+    chuck.add(frame);
+    quiet(box(group, 1.2, 0.08, 0.08, BODY, 0, 1.35, -0.15));
+  } else if (id === "subbake") {
+    for (let i = 0; i < 4; i++) {
+      quiet(box(group, 0.36, 0.02, 0.22, mat(0xd3925a, { roughness: 0.4, metalness: 0.45 }), 0.95, 0.55 + i * 0.18, -0.55));
+    }
+    quiet(box(group, 0.08, 0.9, 0.28, DARK, 0.78, 0.9, -0.55));
+    quiet(box(group, 0.08, 0.9, 0.28, DARK, 1.14, 0.9, -0.55));
+  } else if (id === "wos") {
+    for (let i = 0; i < 4; i++) {
+      quiet(box(chuck, 0.5, 0.008, 0.02, DARK, 0.1, 0.09, -0.18 + i * 0.12));
+    }
+    quiet(box(group, 0.55, 0.06, 0.4, mat(0x14181e, { roughness: 0.5, metalness: 0.3 }), 0.85, 0.55, 0.15));
+  } else if (id === "underfill") {
+    quiet(cyl(chuck, 0.07, 0.05, 0.28, mat(0xc48a5a, { roughness: 0.35, metalness: 0.25 }), 0, 0.85, 0, 12));
+    quiet(box(chuck, 0.16, 0.1, 0.12, BODY, -0.2, 0.7, 0.1));
+    const eye = mat(0x9fd4ff, { emissive: 0x245868, emissiveIntensity: 0.4 });
+    quiet(cyl(chuck, 0.04, 0.04, 0.08, eye, 0.22, 0.62, 0.16, 10));
+  } else if (id === "ufcure") {
+    const belt = new THREE.Group();
+    for (let i = 0; i < 5; i++) {
+      const roller = quiet(cyl(belt, 0.05, 0.05, 0.7, STEEL, -0.4 + i * 0.2, 0.12, 0, 10));
+      roller.rotation.z = Math.PI / 2;
+    }
+    chuck.add(belt);
+    parts.belt = belt;
+    quiet(box(group, 0.9, 0.04, 0.08, mat(0x3ec8a0, { emissive: 0x14684a, emissiveIntensity: 0.5 }), 0.05, 1.35, 0.36));
+  } else if (id === "warpage") {
+    const left = quiet(cyl(chuck, 0.03, 0.03, 0.34, mat(0xff6b7a, { emissive: 0xff3048, emissiveIntensity: 0.45 }), -0.35, 0.55, 0.1, 8));
+    left.rotation.z = 0.5;
+    const right = quiet(cyl(chuck, 0.03, 0.03, 0.34, STEEL, 0.35, 0.55, 0.1, 8));
+    right.rotation.z = -0.5;
+    quiet(box(chuck, 0.7, 0.02, 0.5, CERAMIC, -0.1, 0.08, 0));
+  } else if (id === "ball") {
+    quiet(cyl(group, 0.1, 0.08, 0.12, mat(0xc47a3a, { roughness: 0.35, metalness: 0.4 }), -0.85, 0.55, 0.2, 12));
+    const stencil = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 4), STEEL);
+    stencil.rotation.x = -Math.PI / 2;
+    stencil.position.set(0.15, 0.2, 0);
+    quiet(stencil);
+    chuck.add(stencil);
+  } else if (id === "reflow") {
+    const zones = [0xc47a32, 0xff5a3a, 0xe08a3a];
+    zones.forEach((color, i) => {
+      const glow = mat(color, { emissive: color, emissiveIntensity: 0.4, transparent: true, opacity: 0.55 });
+      quiet(box(group, 0.42, 0.28, 0.04, glow, -0.5 + i * 0.5, 1.2, 0.36));
+    });
+    const belt = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const roller = quiet(cyl(belt, 0.04, 0.04, 0.62, DARK, -0.6 + i * 0.24, 0.1, 0, 8));
+      roller.rotation.z = Math.PI / 2;
+    }
+    chuck.add(belt);
+    parts.belt = belt;
+  } else if (id === "fluxclean") {
+    for (const z of [-0.28, 0, 0.28]) pipe(group, 0, 1.25, z, 0.45);
+    quiet(box(group, 0.9, 0.06, 0.08, STEEL, 0, 1.45, -0.15));
+  } else if (id === "ftest") {
+    quiet(box(group, 0.28, 0.7, 0.28, BODY, -0.85, 0.7, 0.15));
+    quiet(box(group, 0.28, 0.7, 0.28, BODY, 0.95, 0.7, 0.15));
+    for (let i = 0; i < 3; i++) quiet(box(group, 0.18, 0.025, 0.16, DARK, -0.85, 0.48 + i * 0.16, 0.15));
+  } else if (id === "mark") {
+    quiet(box(chuck, 0.22, 0.12, 0.16, BODY, 0, 0.78, 0));
+    pipe(group, 0.7, 1.2, -0.4, 0.6);
+    quiet(box(group, 0.16, 0.16, 0.16, DARK, 0.7, 1.55, -0.4));
+  } else if (id === "pack") {
+    for (let i = 0; i < 3; i++) {
+      quiet(box(group, 0.62, 0.03, 0.42, mat(0x14181e, { roughness: 0.5, metalness: 0.25 }), -0.85, 0.5 + i * 0.08, 0.15));
+    }
+    quiet(box(chuck, 0.08, 0.08, 0.08, mat(0xf0d48a, { emissive: 0xc4922a, emissiveIntensity: 0.35 }), -0.35, 0.12, -0.22));
+  }
+}
+
 export function buildTool(station) {
   const group = new THREE.Group();
   group.position.set(station.place.x, 0, station.place.z);
@@ -316,6 +481,8 @@ export function buildTool(station) {
     box(chuck, 0.85, 0.04, 0.6, mat(0x14181e, { roughness: 0.5, metalness: 0.25 }), 0, 0.05, 0);
   }
 
+  dressTool(group, chuck, parts, station);
+
   const lights = stackLight(group, 1.15, 0.22, -0.9);
   const hit = new THREE.Mesh(
     new THREE.BoxGeometry(2.5, 2.3, 2.2),
@@ -335,7 +502,8 @@ export function buildTool(station) {
 export function poseTool(built, m, spin) {
   const { parts } = built;
   if (parts.head) {
-    parts.head.position.set(m.head.x, m.head.y, m.head.z);
+    const passX = built.kind === "ball" ? (m.pass || 0) * 0.22 : 0;
+    parts.head.position.set(m.head.x + passX, m.head.y, m.head.z);
     if (parts.quill) parts.quill.scale.y = Math.max(0.08, 1.15 - m.head.y);
   }
   if (parts.spindle) {
@@ -368,7 +536,14 @@ export function poseTool(built, m, spin) {
     if (parts.ovenDoor.userData.baseY == null) parts.ovenDoor.userData.baseY = parts.ovenDoor.position.y;
     parts.ovenDoor.position.y = parts.ovenDoor.userData.baseY + (m.door || 0) * 0.35;
   }
-  if (parts.needle) parts.needle.position.y = 0.55 - (m.needle || 0) * 0.38;
+  if (parts.needle) {
+    parts.needle.position.y = 0.55 - (m.needle || 0) * 0.38;
+    parts.needle.position.x = (m.pass || 0) * 0.42;
+  }
+  if (parts.rotor) parts.rotor.rotation.y = spin;
+  if (parts.belt) {
+    for (const roller of parts.belt.children) roller.rotation.x = spin;
+  }
   if (parts.laser) {
     parts.laser.material.opacity = 0.05 + (m.laser || 0) * 0.85;
     parts.laser.scale.y = 0.3 + (m.laser || 0) * 0.7;
@@ -384,6 +559,9 @@ const SHELL = {
   tray: mat(0x14181e, { roughness: 0.55, metalness: 0.25 }),
 };
 
+const SLOT = mat(0x8aa3a8, { roughness: 0.45, metalness: 0.35 });
+const PIP = mat(0xf2d48a, { metalness: 0.8, roughness: 0.2 });
+
 export function carrierShell(type) {
   const g = new THREE.Group();
   if (type === "FOUP") {
@@ -393,26 +571,56 @@ export function carrierShell(type) {
     box(g, 0.92, 0.08, 0.78, SHELL.foup, 0, 1.32, 0);
     box(g, 0.92, 0.08, 0.78, DARK, 0, 0.08, 0);
     box(g, 0.28, 0.08, 0.12, COPPER, 0, 1.4, 0.1);
-    for (let i = 0; i < 5; i++) {
-      const w = cyl(g, 0.28, 0.28, 0.015, SHELL.wafer, 0, 0.28 + i * 0.16, -0.05, 20);
-      w.rotation.x = Math.PI / 2;
+    box(g, 0.16, 0.08, 0.04, COPPER, 0.28, 0.7, 0.36);
+    for (const x of [-0.34, 0.34]) {
+      for (let i = 0; i < 8; i++) box(g, 0.02, 0.012, 0.1, SLOT, x, 0.22 + i * 0.12, 0.28);
     }
+    for (let i = 0; i < 8; i++) {
+      const w = cyl(g, 0.3, 0.3, 0.012, SHELL.wafer, 0, 0.22 + i * 0.12, -0.02, 20);
+      w.rotation.x = Math.PI / 2;
+      w.castShadow = false;
+    }
+    const notch = cyl(g, 0.04, 0.04, 0.02, COPPER, 0.22, 0.22, -0.02, 8);
+    notch.rotation.x = Math.PI / 2;
   } else if (type === "FRAME") {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.035, 8, 28), SHELL.frame);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.04, 8, 28), SHELL.frame);
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.08;
     g.add(ring);
-    cyl(g, 0.44, 0.44, 0.02, SHELL.tape, 0, 0.06, 0, 28);
+    cyl(g, 0.44, 0.44, 0.018, SHELL.tape, 0, 0.06, 0, 28);
+    for (let i = -1; i <= 1; i++) {
+      box(g, 0.7, 0.006, 0.012, SLOT, 0, 0.08, i * 0.18);
+      box(g, 0.012, 0.006, 0.7, SLOT, i * 0.18, 0.082, 0);
+    }
+    for (const [x, z] of [[-0.16, 0.16], [0.16, -0.16], [0.16, 0.16], [-0.16, -0.16]]) {
+      box(g, 0.1, 0.02, 0.08, CERAMIC, x, 0.09, z);
+    }
   } else if (type === "MAG") {
-    box(g, 0.55, 1.35, 0.4, DARK, 0, 0.7, 0);
-    for (let i = 0; i < 6; i++) box(g, 0.48, 0.03, 0.34, SHELL.sub, 0.04, 0.22 + i * 0.18, 0);
+    box(g, 0.08, 1.35, 0.42, DARK, -0.26, 0.7, 0);
+    box(g, 0.08, 1.35, 0.42, DARK, 0.26, 0.7, 0);
+    box(g, 0.5, 0.06, 0.42, DARK, 0, 1.35, 0);
+    box(g, 0.16, 0.06, 0.08, COPPER, 0, 1.42, 0.12);
+    for (let i = 0; i < 6; i++) {
+      const y = 0.24 + i * 0.17;
+      box(g, 0.42, 0.025, 0.3, SHELL.sub, 0, y, 0);
+      box(g, 0.28, 0.008, 0.04, PIP, 0, y + 0.02, 0.08);
+    }
   } else {
-    box(g, 1.15, 0.06, 0.78, SHELL.tray, 0, 0.06, 0);
-    box(g, 1.15, 0.04, 0.04, DARK, 0, 0.1, 0.37);
-    box(g, 1.15, 0.04, 0.04, DARK, 0, 0.1, -0.37);
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 3; c++) {
-        box(g, 0.22, 0.015, 0.18, mat(0x0c1014, { roughness: 0.6 }), -0.32 + c * 0.32, 0.095, -0.16 + r * 0.32);
+    box(g, 1.15, 0.05, 0.78, SHELL.tray, 0, 0.05, 0);
+    box(g, 1.2, 0.05, 0.04, DARK, 0, 0.1, 0.38);
+    box(g, 1.2, 0.05, 0.04, DARK, 0, 0.1, -0.38);
+    box(g, 0.04, 0.05, 0.78, DARK, 0.58, 0.1, 0);
+    box(g, 0.04, 0.05, 0.78, DARK, -0.58, 0.1, 0);
+    box(g, 0.06, 0.02, 0.06, PIP, -0.48, 0.09, -0.3);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        const x = -0.36 + c * 0.24;
+        const z = -0.22 + r * 0.22;
+        box(g, 0.16, 0.012, 0.14, mat(0x0c1014, { roughness: 0.6 }), x, 0.085, z);
+        const pip = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 5), PIP);
+        pip.position.set(x, 0.1, z);
+        pip.castShadow = false;
+        g.add(pip);
       }
     }
   }
