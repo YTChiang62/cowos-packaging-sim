@@ -8,13 +8,14 @@ import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
 import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
 import { WalkController } from "./walk.js";
+import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 
 const BAYS = [
-  { id: "incoming", x: -36.75, z: -18, w: 16, d: 12, color: 0x3a2a1c },
-  { id: "cow", x: -12, z: -18, w: 32, d: 12, color: 0x102824 },
-  { id: "dice", x: -34, z: 18, w: 18, d: 12, color: 0x1a1a30 },
-  { id: "wos", x: -8, z: 18, w: 32, d: 12, color: 0x2a2214 },
-  { id: "pack", x: 24.5, z: 18, w: 32, d: 12, color: 0x262018 },
+  { id: "incoming", x: -36.75, z: -18, w: 16, d: 12 },
+  { id: "cow", x: -12, z: -18, w: 32, d: 12 },
+  { id: "dice", x: -34, z: 18, w: 18, d: 12 },
+  { id: "wos", x: -8, z: 18, w: 32, d: 12 },
+  { id: "pack", x: 24.5, z: 18, w: 32, d: 12 },
 ];
 
 const BAY_ACCENT = {
@@ -28,58 +29,19 @@ const BAY_ACCENT = {
 const LABEL_FONT = "700 42px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC','Microsoft JhengHei',sans-serif";
 const SUB_FONT = "500 26px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC','Microsoft JhengHei',sans-serif";
 
-function makeFloorTexture() {
+function browserStore() {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeFloorTexture(palette) {
   const s = 2048;
   const c = document.createElement("canvas");
   c.width = c.height = s;
-  const g = c.getContext("2d");
-  g.fillStyle = "#1c2e34";
-  g.fillRect(0, 0, s, s);
-  g.fillStyle = "rgba(211,146,90,0.16)";
-  for (let y = 40; y < s; y += 18) {
-    for (let x = 40; x < s; x += 18) {
-      g.beginPath();
-      g.arc(x + ((y / 18) % 2) * 4, y, 1.3, 0, Math.PI * 2);
-      g.fill();
-    }
-  }
-  g.strokeStyle = "rgba(211,146,90,0.28)";
-  g.lineWidth = 2;
-  for (let i = 0; i < 28; i++) {
-    const y = 80 + i * 68;
-    g.beginPath();
-    g.moveTo(40, y);
-    g.bezierCurveTo(400, y + 20, 900, y - 18, 2000, y + 8);
-    g.stroke();
-  }
-  const toPx = (m, origin, span, size) => ((m - origin) / span) * size;
-  const worldW = 100;
-  const worldD = 80;
-  const ox = -50;
-  const oz = -40;
-  for (const bay of BAYS) {
-    const x = toPx(bay.x - bay.w / 2, ox, worldW, s);
-    const z = toPx(bay.z - bay.d / 2, oz, worldD, s);
-    const w = (bay.w / worldW) * s;
-    const d = (bay.d / worldD) * s;
-    const col = "#" + BAY_ACCENT[bay.id].toString(16).padStart(6, "0");
-    g.fillStyle = "rgba(80,120,120,0.10)";
-    g.fillRect(x, z, w, d);
-    g.strokeStyle = col;
-    g.globalAlpha = 0.7;
-    g.lineWidth = 4;
-    g.strokeRect(x + 6, z + 6, w - 12, d - 12);
-    g.globalAlpha = 1;
-  }
-  g.strokeStyle = "rgba(211,146,90,0.35)";
-  g.setLineDash([16, 14]);
-  g.lineWidth = 5;
-  const aisleZ = toPx(0, oz, worldD, s);
-  g.beginPath();
-  g.moveTo(toPx(-46, ox, worldW, s), aisleZ);
-  g.lineTo(toPx(42, ox, worldW, s), aisleZ);
-  g.stroke();
-  g.setLineDash([]);
+  paintFloor(c.getContext("2d"), s, palette, BAYS, BAY_ACCENT);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -106,18 +68,31 @@ function labelSprite(title, sub, accent) {
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
   sp.scale.set(4.4, 1.1, 1);
   sp.center.set(0.5, 0);
+  sp.userData.plate = {
+    fill: "rgba(6,14,18,0.92)",
+    title: "#f4faf8",
+    sub: "#d5e2e4",
+  };
+  sp.userData.setPlate = (plate) => {
+    if (plate) sp.userData.plate = plate;
+    sp.userData.redraw(sp.userData._title, sp.userData._sub, sp.userData._accent);
+  };
   sp.userData.redraw = (t, s, a) => {
+    sp.userData._title = t;
+    sp.userData._sub = s;
+    sp.userData._accent = a;
+    const plate = sp.userData.plate;
     g.clearRect(0, 0, 512, 128);
-    g.fillStyle = "rgba(8,18,22,0.82)";
+    g.fillStyle = plate.fill;
     roundRect(g, 8, 16, 496, 96, 20);
     g.fill();
-    g.strokeStyle = a || accent || "rgba(211,146,90,0.7)";
-    g.lineWidth = 3;
+    g.strokeStyle = a || accent || "rgba(211,146,90,0.85)";
+    g.lineWidth = 4;
     g.stroke();
-    g.fillStyle = "#e8f3f0";
+    g.fillStyle = plate.title;
     g.font = LABEL_FONT;
     g.fillText(t, 28, 62);
-    g.fillStyle = "#8aa3a8";
+    g.fillStyle = plate.sub;
     g.font = SUB_FONT;
     g.fillText(s, 28, 94);
     tex.needsUpdate = true;
@@ -138,11 +113,15 @@ function bayLabel(text, accent) {
   sp.position.y = 0.12;
   sp.userData.redraw = (t) => {
     g.clearRect(0, 0, 768, 128);
+    g.fillStyle = "rgba(6,14,18,0.78)";
+    roundRect(g, 90, 18, 588, 92, 18);
+    g.fill();
     g.fillStyle = accent;
-    g.globalAlpha = 0.9;
+    g.globalAlpha = 0.95;
     g.font = "700 64px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC',sans-serif";
     g.textAlign = "center";
-    g.fillText(t, 384, 84);
+    g.fillText(t, 384, 82);
+    g.globalAlpha = 1;
     tex.needsUpdate = true;
   };
   sp.userData.redraw(text);
@@ -185,12 +164,12 @@ export class Plant {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.32;
+    this.renderer.toneMappingExposure = 1;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.setClearColor(0x071016, 1);
+    this.renderer.setClearColor(0x000000, 1);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x071016, 140, 280);
+    this.scene.fog = new THREE.Fog(0x000000, 140, 280);
     this.camera = new THREE.PerspectiveCamera(42, this._aspect(), 0.1, 220);
     this.camera.position.set(2, 40, 48);
     this.controls = new OrbitControls(this.camera, canvas);
@@ -242,8 +221,20 @@ export class Plant {
     this.inspectRing.visible = false;
     this.scene.add(this.inspectRing);
     this._bindWalkInput();
+    applyTheme(this, readThemeId(browserStore()));
     this.showLot("bank", STATIONS[0].tool, "FOUP");
     this.resize();
+  }
+
+  repaintFloor(palette) {
+    if (!this.floor) return;
+    const tex = makeFloorTexture(palette);
+    const material = this.floor.material;
+    if (material.map) material.map.dispose();
+    material.map = tex;
+    material.roughness = palette.floor.roughness;
+    material.metalness = palette.floor.metalness;
+    material.needsUpdate = true;
   }
 
   setAvatarRole(role) {
@@ -524,9 +515,9 @@ export class Plant {
   }
 
   _buildWorld() {
-    const hemi = new THREE.HemisphereLight(0xd5eef2, 0x24180e, 1.25);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xf2e6d0, 1.35);
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
     sun.position.set(24, 40, 18);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -538,28 +529,32 @@ export class Plant {
     sun.shadow.camera.bottom = -50;
     sun.shadow.bias = -0.0007;
     this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x4aa89c, 0.35);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.3);
     fill.position.set(-30, 22, -12);
     this.scene.add(fill);
-    const rim = new THREE.DirectionalLight(0x9fd4ff, 0.22);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.2);
     rim.position.set(-40, 18, 30);
     this.scene.add(rim);
-    const stockerLight = new THREE.PointLight(0xf0c08a, 14, 18);
-    stockerLight.position.set(-46.2, 3.2, 6.2);
-    this.scene.add(stockerLight);
+    const stocker = new THREE.PointLight(0xffffff, 1, 18);
+    stocker.position.set(-46.2, 3.2, 6.2);
+    this.scene.add(stocker);
+    this.lights = { hemi, sun, fill, rim, stocker };
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(100, 80),
-      new THREE.MeshStandardMaterial({ map: makeFloorTexture(), roughness: 0.82, metalness: 0.18 })
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.08 })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
+    this.floor = floor;
     this.scene.add(floor);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(102, 0.6, 82), stdMat(0x141c20, { roughness: 0.9, metalness: 0.05 }));
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(102, 0.6, 82), stdMat(0xffffff, { roughness: 0.9, metalness: 0.05 }));
     skirt.position.y = -0.36;
+    this.skirt = skirt;
     this.scene.add(skirt);
 
-    const wallMat = stdMat(0x6ec8c0, { transparent: true, opacity: 0.07, roughness: 0.1, metalness: 0.2 });
+    const wallMat = stdMat(0xffffff, { transparent: true, opacity: 0.1, roughness: 0.1, metalness: 0.2 });
+    this.wallMat = wallMat;
     const wall = new THREE.Mesh(new THREE.BoxGeometry(96, 6.5, 0.12), wallMat);
     wall.position.set(0, 3.2, -39);
     this.scene.add(wall);
@@ -575,8 +570,11 @@ export class Plant {
   }
 
   _buildBays() {
-    const glass = stdMat(0x7fdad0, { transparent: true, opacity: 0.09, roughness: 0.08, metalness: 0.15 });
-    const frame = stdMat(0xb8874e, { roughness: 0.35, metalness: 0.7 });
+    const glass = stdMat(0xffffff, { transparent: true, opacity: 0.1, roughness: 0.08, metalness: 0.15 });
+    const frame = stdMat(0xffffff, { roughness: 0.35, metalness: 0.7 });
+    this.bayGlass = glass;
+    this.bayFrame = frame;
+    this.bayPlinths = [];
     for (const bay of BAYS) {
       const group = new THREE.Group();
       group.position.set(bay.x, 0, bay.z);
@@ -605,9 +603,11 @@ export class Plant {
           group.add(pane);
         }
       }
+      const plinthMat = stdMat(0xffffff, { roughness: 0.7, metalness: 0.15 });
+      this.bayPlinths.push({ id: bay.id, material: plinthMat });
       const plinth = new THREE.Mesh(
         new THREE.BoxGeometry(bay.w - 0.6, 0.06, bay.d - 0.6),
-        stdMat(bay.color, { roughness: 0.7, metalness: 0.15 })
+        plinthMat
       );
       plinth.position.y = 0.03;
       plinth.receiveShadow = true;
@@ -640,9 +640,9 @@ export class Plant {
       label.scale.set(2.7, 0.68, 1);
       label.position.set(0, 2.35, 0);
       built.group.add(label);
-      const work = new THREE.PointLight(0xfff4e4, 1.8, 7);
-      work.position.set(0, 1.45, 0.2);
-      built.chuck.add(work);
+      const workLight = new THREE.PointLight(0xfff4e4, 1.8, 7);
+      workLight.position.set(0, 1.45, 0.2);
+      built.chuck.add(workLight);
       this.scene.add(built.group);
       this.tools.set(station.tool, {
         ...built,
@@ -651,6 +651,7 @@ export class Plant {
         bay: station.place.bay,
         face: station.place.face,
         label,
+        workLight,
         status: "idle",
       });
       poseTool(this.tools.get(station.tool), motion(station.id, 0, 0), 0);

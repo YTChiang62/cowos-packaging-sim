@@ -17,8 +17,8 @@ export function buildAvatar(role = "MFG") {
   const rig = new THREE.Group();
   root.add(rig);
 
-  const suit = mat(0xe4f0ee, { roughness: 0.78, metalness: 0.02 });
-  const seam = mat(0xb7c9c6, { roughness: 0.72, metalness: 0.04 });
+  const suit = mat(0xf7fbfb, { roughness: 0.72, metalness: 0.02 });
+  const seam = mat(0x5d7278, { roughness: 0.6, metalness: 0.08 });
   const visorMat = mat(0x10262c, {
     roughness: 0.08,
     metalness: 0.55,
