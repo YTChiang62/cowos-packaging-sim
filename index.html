@@ -11,7 +11,7 @@
     { "imports": { "three": "./vendor/three.module.min.js" } }
   </script>
 </head>
-<body>
+<body class="theme-light">
   <canvas id="view" aria-label="APEX-3D plant view"></canvas>
   <div id="vignette"></div>
   <div id="grain"></div>
@@ -200,6 +200,22 @@
     <div class="kicker" data-i18n="logKicker">出入庫紀錄</div>
     <ul id="wh-log" class="wh-log"></ul>
   </aside>
+
+  <div class="theme-dock panel" id="theme-dock" role="group" aria-label="底色">
+    <span class="theme-kicker" data-i18n="themeLabel">底色</span>
+    <button type="button" data-theme="light" aria-pressed="true">
+      <span class="swatch" data-swatch="light"></span>
+      <span data-i18n="themeLight">淺色潔淨室</span>
+    </button>
+    <button type="button" data-theme="neutral" aria-pressed="false">
+      <span class="swatch" data-swatch="neutral"></span>
+      <span data-i18n="themeNeutral">中性灰</span>
+    </button>
+    <button type="button" data-theme="dark" aria-pressed="false">
+      <span class="swatch" data-swatch="dark"></span>
+      <span data-i18n="themeDark">深色</span>
+    </button>
+  </div>
 
   <div class="cam-dock panel">
     <button type="button" id="btn-cam-overview" data-i18n="camOverview">總覽</button>

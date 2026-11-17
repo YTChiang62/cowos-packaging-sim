@@ -1,4 +1,5 @@
 import { LANGS, t, applyStaticI18n } from "./i18n.js";
+import { THEME_IDS, applyTheme, paletteOf } from "./themes.js";
 import { Session, STEPS } from "./mes.js";
 import { Plant } from "./plant.js";
 import {
@@ -22,6 +23,26 @@ plant.focusOverview();
 
 applyStaticI18n(state.lang);
 els.btnLang.textContent = "繁";
+
+function syncThemeUi() {
+  const dock = document.getElementById("theme-dock");
+  if (!dock) return;
+  dock.setAttribute("aria-label", t(state.lang, "themeLabel"));
+  dock.querySelectorAll("[data-theme]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.theme === plant.themeId));
+  });
+}
+for (const id of THEME_IDS) {
+  const swatch = document.querySelector(`[data-swatch="${id}"]`);
+  if (swatch) swatch.style.background = paletteOf(id).swatch;
+}
+syncThemeUi();
+document.getElementById("theme-dock").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-theme]");
+  if (!btn) return;
+  applyTheme(plant, btn.dataset.theme, localStorage);
+  syncThemeUi();
+});
 
 function attachSession(session) {
   state.session = session;
@@ -220,6 +241,7 @@ els.btnLang.addEventListener("click", () => {
   state.lang = LANGS[(i + 1) % LANGS.length];
   applyStaticI18n(state.lang);
   plant.setTranslator((k) => t(state.lang, k), state.lang);
+  syncThemeUi();
   renderAll(state.lang, state.session, els);
   if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
   syncWalkHint();

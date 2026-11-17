@@ -18,14 +18,27 @@ import {
 import { frame, motion, posesEqual } from "../js/morph.js";
 import {
   PERSON_RADIUS,
+  TOOL_HALF_X,
+  TOOL_Z_MAX,
+  TOOL_Z_MIN,
   WALK_SPAWN,
   WalkController,
   blockedAt,
+  buildSolids,
   nextCameraMode,
   stockerSolid,
   toolSolid,
   wallSolids,
 } from "../js/walk.js";
+import {
+  DEFAULT_THEME,
+  THEME_IDS,
+  THEME_STORAGE_KEY,
+  applyTheme,
+  paletteOf,
+  readThemeId,
+  writeThemeId,
+} from "../js/themes.js";
 
 let failed = 0;
 function check(name, cond) {
@@ -649,6 +662,120 @@ check(
   "walk mode does not pause auto or the crane",
   sim.auto === true && sim.facility.mode === "AUTO" && craneMoved && walker.active === true
 );
+
+check("theme ids are light, neutral, and dark", THEME_IDS.join(",") === "light,neutral,dark");
+check("the default scene theme is light", DEFAULT_THEME === "light");
+check("an empty store resolves to the light theme", readThemeId(memStore()) === "light");
+check("a missing store resolves to the light theme", readThemeId(null) === "light");
+check("a stored dark id is kept", readThemeId(memStore({ [THEME_STORAGE_KEY]: "dark" })) === "dark");
+check("an unknown stored id falls back to light", readThemeId(memStore({ [THEME_STORAGE_KEY]: "purple" })) === "light");
+
+const themeStore = memStore();
+check("writing a theme id persists it", writeThemeId("neutral", themeStore) === "neutral" && themeStore.getItem(THEME_STORAGE_KEY) === "neutral");
+
+function fakeColor(hex = 0) {
+  return { hex, setHex(v) { this.hex = v; } };
+}
+const themeTool = {
+  group: { position: { x: -18, y: 0, z: -17.15 } },
+  workLight: { color: fakeColor(), intensity: 0, distance: 0 },
+  label: { userData: { plate: null, setPlate(p) { this.plate = p; } } },
+};
+const themePlant = {
+  themeId: null,
+  palette: null,
+  renderer: { clear: null, toneMappingExposure: 0, setClearColor(c) { this.clear = c; } },
+  scene: { fog: { color: fakeColor(), near: 0, far: 0 } },
+  lights: {
+    hemi: { color: fakeColor(), groundColor: fakeColor(), intensity: 0 },
+    sun: { color: fakeColor(), intensity: 0 },
+    fill: { color: fakeColor(), intensity: 0 },
+    rim: { color: fakeColor(), intensity: 0 },
+    stocker: { color: fakeColor(), intensity: 0, distance: 0 },
+  },
+  skirt: { material: { color: fakeColor() } },
+  wallMat: { color: fakeColor(), opacity: 1 },
+  bayGlass: { color: fakeColor(), opacity: 1 },
+  bayFrame: { color: fakeColor() },
+  bayPlinths: ["incoming", "cow", "dice", "wos", "pack"].map((id) => ({ id, material: { color: fakeColor() } })),
+  floorPaint: null,
+  repaintFloor(palette) { this.floorPaint = palette.floor.base; },
+  tools: new Map([["HB-21", themeTool]]),
+};
+
+const placeSnap = JSON.stringify(FLOW.map((s) => [s.tool, s.id, s.recipe, s.place.x, s.place.z, s.place.face]));
+const recipeSnap = JSON.stringify(Object.keys(RECIPES));
+applyTheme(themePlant, "light", themeStore);
+check("applyTheme selects light and stores it", themePlant.themeId === "light" && themeStore.getItem(THEME_STORAGE_KEY) === "light");
+check("applyTheme writes the light clear color and exposure", themePlant.renderer.clear === themePlant.palette.clear && themePlant.renderer.toneMappingExposure === themePlant.palette.exposure);
+check("applyTheme writes fog and the floor base", themePlant.scene.fog.color.hex === themePlant.palette.fog && themePlant.scene.fog.near === themePlant.palette.fogNear && themePlant.floorPaint === themePlant.palette.floor.base);
+check("applyTheme writes hemisphere intensity and bay tint", themePlant.lights.hemi.intensity === themePlant.palette.hemi.intensity && themePlant.bayPlinths[0].material.color.hex === themePlant.palette.bays.incoming);
+check("applyTheme writes wall opacity and the work light", themePlant.wallMat.opacity === themePlant.palette.wall.opacity && themeTool.workLight.intensity === themePlant.palette.work.intensity && themeTool.label.userData.plate === themePlant.palette.label);
+check("applyTheme does not move a tool group", themeTool.group.position.x === -18 && themeTool.group.position.z === -17.15);
+
+applyTheme(themePlant, "neutral");
+check("neutral theme updates the palette id", themePlant.themeId === "neutral" && themePlant.palette.clear === paletteOf("neutral").clear && themePlant.renderer.clear === paletteOf("neutral").clear);
+check("neutral floor is neither the light nor the dark base", themePlant.floorPaint === "#c5ced3");
+
+applyTheme(themePlant, "nope", themeStore);
+check("an unknown theme id falls back to light and is stored", themePlant.themeId === "light" && themeStore.getItem(THEME_STORAGE_KEY) === "light");
+
+applyTheme(themePlant, "dark");
+const dark = paletteOf("dark");
+check(
+  "dark theme keeps the v5 clear, fog, and exposure",
+  dark.clear === 0x071016 && dark.fog === 0x071016 && dark.fogNear === 140 && dark.fogFar === 280 && dark.exposure === 1.32 && themePlant.renderer.clear === 0x071016
+);
+check("dark theme keeps the v5 floor and skirt", dark.floor.base === "#1c2e34" && dark.skirt === 0x141c20 && themePlant.skirt.material.color.hex === 0x141c20 && themePlant.floorPaint === "#1c2e34");
+check("dark theme keeps the v5 wall opacity", dark.wall.opacity === 0.07 && themePlant.wallMat.opacity === 0.07);
+check(
+  "dark theme keeps the v5 lights",
+  dark.hemi.sky === 0xd5eef2 && dark.hemi.ground === 0x24180e && dark.hemi.intensity === 1.25 &&
+  dark.sun.color === 0xf2e6d0 && dark.sun.intensity === 1.35 &&
+  dark.fill.color === 0x4aa89c && dark.fill.intensity === 0.35 &&
+  dark.rim.color === 0x9fd4ff && dark.rim.intensity === 0.22 &&
+  dark.stocker.color === 0xf0c08a && dark.stocker.intensity === 14 &&
+  themePlant.lights.sun.intensity === 1.35 && themePlant.lights.stocker.intensity === 14
+);
+check(
+  "dark theme keeps the v5 bay tints",
+  dark.bays.incoming === 0x3a2a1c && dark.bays.cow === 0x102824 && dark.bays.dice === 0x1a1a30 && dark.bays.wos === 0x2a2214 && dark.bays.pack === 0x262018 &&
+  themePlant.bayPlinths.every((entry) => entry.material.color.hex === dark.bays[entry.id])
+);
+
+check("switching theme does not move tools or change the flow", JSON.stringify(FLOW.map((s) => [s.tool, s.id, s.recipe, s.place.x, s.place.z, s.place.face])) === placeSnap);
+check("switching theme does not change recipe ids", JSON.stringify(Object.keys(RECIPES)) === recipeSnap);
+
+const footprint = buildSolids().filter((solid) => solid.kind === "tool");
+check("equipment footprints are still the 21 tool solids", footprint.length === 21);
+check(
+  "tool solids still use the shared footprint",
+  FLOW.every((step) => {
+    const solid = toolSolid(step.place, step.tool);
+    return (
+      Math.abs(solid.minX - (step.place.x - TOOL_HALF_X)) < 1e-9 &&
+      Math.abs(solid.maxX - (step.place.x + TOOL_HALF_X)) < 1e-9 &&
+      Math.abs((solid.maxZ - solid.minZ) - (TOOL_Z_MAX - TOOL_Z_MIN)) < 1e-9 &&
+      solid.id === step.tool
+    );
+  })
+);
+const themeWalk = new WalkController();
+const themeEntered = themeWalk.enter();
+check(
+  "theme switching leaves walk enter and the aisle spawn intact",
+  themeWalk.active === true && themeEntered.x === WALK_SPAWN.x && themeEntered.z === WALK_SPAWN.z && !themeWalk.blocked(themeEntered.x, themeEntered.z)
+);
+const themeLeft = themeWalk.exit();
+check("theme switching leaves walk exit intact", themeWalk.active === false && themeLeft.mode === "overview" && themeLeft.controls === true);
+
+function memStore(initial = {}) {
+  const data = { ...initial };
+  return {
+    getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null; },
+    setItem(key, value) { data[key] = String(value); },
+  };
+}
 
 if (failed) {
   console.error(`\n${failed} check(s) failed`);

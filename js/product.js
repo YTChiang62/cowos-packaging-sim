@@ -101,9 +101,15 @@ export class Workpiece {
 
     this.kgdMat = fadeMat(0xd7ebe7, { roughness: 0.4, metalness: 0.22 });
     this.kgdHbm = fadeMat(0x3ee0c0, { roughness: 0.35, metalness: 0.3, emissive: 0x0a3a32, emissiveIntensity: 0.3 });
-    this.kgdTrayMat = fadeMat(0x1a140e, { roughness: 0.55, metalness: 0.25 });
+    this.kgdTrayMat = fadeMat(0x6b5340, { roughness: 0.5, metalness: 0.22 });
     this.kgdTray = new THREE.Group();
     box(this.kgdTray, 0.78, 0.03, 0.56, this.kgdTrayMat, 0.95, 0.03, -0.05);
+    this.kgdLipMat = fadeMat(0xd5dee4, { metalness: 0.7, roughness: 0.25 });
+    const trayLip = this.kgdLipMat;
+    box(this.kgdTray, 0.8, 0.018, 0.03, trayLip, 0.95, 0.05, 0.24);
+    box(this.kgdTray, 0.8, 0.018, 0.03, trayLip, 0.95, 0.05, -0.34);
+    box(this.kgdTray, 0.03, 0.018, 0.56, trayLip, 0.57, 0.05, -0.05);
+    box(this.kgdTray, 0.03, 0.018, 0.56, trayLip, 1.33, 0.05, -0.05);
     this.kgdDice = [];
     for (let r = 0; r < 3; r++) {
       for (let c = 0; c < 4; c++) {
@@ -223,17 +229,17 @@ export class Workpiece {
     this.voidBubble = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), this.voidMat);
     g.add(this.voidBubble);
 
-    this.trayMat = fadeMat(0x14181e, { roughness: 0.55, metalness: 0.25 });
+    this.trayMat = fadeMat(0x4a545c, { roughness: 0.5, metalness: 0.28 });
     this.tray = new THREE.Group();
     box(this.tray, 2.05, 0.07, 1.5, this.trayMat, 0, 0.04, 0);
-    const trayRim = mat(0x2a3138, { roughness: 0.5, metalness: 0.3 });
+    const trayRim = mat(0x9aa6ae, { roughness: 0.35, metalness: 0.55 });
     trayRim.userData.fade = true;
     trayRim.transparent = true;
     box(this.tray, 2.05, 0.06, 0.06, trayRim, 0, 0.09, 0.72);
     box(this.tray, 2.05, 0.06, 0.06, trayRim, 0, 0.09, -0.72);
     box(this.tray, 0.06, 0.06, 1.5, trayRim, 0.99, 0.09, 0);
     box(this.tray, 0.06, 0.06, 1.5, trayRim, -0.99, 0.09, 0);
-    const pocket = mat(0x0c1014, { roughness: 0.6, metalness: 0.2 });
+    const pocket = mat(0x242c32, { roughness: 0.6, metalness: 0.2 });
     pocket.userData.fade = true;
     pocket.transparent = true;
     const miniMat = {
@@ -305,6 +311,7 @@ export class Workpiece {
     const showKgd = fadeMaterial(this.kgdTrayMat, kgd);
     fadeMaterial(this.kgdMat, kgd);
     fadeMaterial(this.kgdHbm, kgd);
+    if (this.kgdLipMat) fadeMaterial(this.kgdLipMat, kgd);
     this.kgdTray.visible = showKgd;
     if (pose.alarm > 0.5 && pose.pockets > 0.6) {
       this.pocketMat.emissive.setHex(0xff6b7a);
