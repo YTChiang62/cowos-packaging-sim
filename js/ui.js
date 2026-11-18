@@ -404,6 +404,31 @@ export function renderFacility(lang, session) {
   }
 }
 
+export function renderOps(lang, snapshot) {
+  const card = document.getElementById("ops-card");
+  const advice = document.getElementById("ops-advice");
+  const stats = document.getElementById("ops-stats");
+  if (!card || !advice || !stats) return;
+  if (!snapshot?.bottleneck) {
+    card.hidden = true;
+    advice.textContent = "";
+    stats.replaceChildren();
+    return;
+  }
+  const bottleneck = snapshot.bottleneck;
+  const vars = { ...bottleneck.adviceVars };
+  if (vars.bayKey) vars.bay = t(lang, vars.bayKey);
+  advice.textContent = t(lang, bottleneck.adviceKey, vars);
+  stats.replaceChildren();
+  for (const item of (bottleneck.stats || []).slice(0, 2)) {
+    const pill = document.createElement("span");
+    pill.className = `ops-stat is-${item.tone || "load"}`;
+    pill.textContent = t(lang, item.key, item.vars || {});
+    stats.append(pill);
+  }
+  card.hidden = false;
+}
+
 export function showDone(lang, session, els) {
   const lot = session.lot;
   els.doneLayer.hidden = false;

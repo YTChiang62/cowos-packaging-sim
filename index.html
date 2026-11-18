@@ -201,6 +201,21 @@
     <ul id="wh-log" class="wh-log"></ul>
   </aside>
 
+  <aside class="ops-card panel" id="ops-card" hidden>
+    <div class="kicker" data-i18n="opsKicker">瓶頸</div>
+    <h2 id="ops-title" data-i18n="opsTitle">先鬆這一站</h2>
+    <p id="ops-advice"></p>
+    <div class="ops-stats" id="ops-stats"></div>
+  </aside>
+
+  <div class="ops-layers panel" id="ops-layers" role="group" aria-label="廠況">
+    <span class="theme-kicker" data-i18n="opsLayerLabel">廠況</span>
+    <button type="button" data-ops-layer="load" aria-pressed="true" data-i18n="opsLayerLoad">負載</button>
+    <button type="button" data-ops-layer="alarm" aria-pressed="true" data-i18n="opsLayerAlarm">報警</button>
+    <button type="button" data-ops-layer="queue" aria-pressed="true" data-i18n="opsLayerQueue">排隊</button>
+    <button type="button" data-ops-layer="current" aria-pressed="false" data-i18n="opsLayerCurrent">當前</button>
+  </div>
+
   <div class="theme-dock panel" id="theme-dock" role="group" aria-label="底色">
     <span class="theme-kicker" data-i18n="themeLabel">底色</span>
     <button type="button" data-theme="light" aria-pressed="true">

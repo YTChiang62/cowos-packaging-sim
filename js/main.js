@@ -3,8 +3,9 @@ import { THEME_IDS, applyTheme, paletteOf } from "./themes.js";
 import { Session, STEPS } from "./mes.js";
 import { Plant } from "./plant.js";
 import {
-  bindUI, renderAll, renderFacility, showTool, hideTool, showToast, showRadio, showDone,
+  bindUI, renderAll, renderFacility, renderOps, showTool, hideTool, showToast, showRadio, showDone,
 } from "./ui.js";
+import { buildOpsSnapshot, opsInputFromSession, readLayers, writeLayers } from "./ops.js";
 
 const canvas = document.getElementById("view");
 const els = bindUI();
@@ -18,11 +19,56 @@ const state = {
 };
 
 const plant = new Plant(canvas);
-plant.setTranslator((k) => t(state.lang, k), state.lang);
+plant.setTranslator((k, vars) => t(state.lang, k, vars || {}), state.lang);
 plant.focusOverview();
 
 applyStaticI18n(state.lang);
 els.btnLang.textContent = "繁";
+
+let opsLayers = readLayers(localStorage);
+let opsElapsed = 0;
+let opsTick = 0;
+let opsSig = "";
+
+function syncLayerUi() {
+  const dock = document.getElementById("ops-layers");
+  if (!dock) return;
+  dock.setAttribute("aria-label", t(state.lang, "opsLayerLabel"));
+  dock.querySelectorAll("[data-ops-layer]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(!!opsLayers[btn.dataset.opsLayer]));
+  });
+}
+syncLayerUi();
+document.getElementById("ops-layers").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-ops-layer]");
+  if (!btn) return;
+  const id = btn.dataset.opsLayer;
+  opsLayers = writeLayers({ ...opsLayers, [id]: !opsLayers[id] }, localStorage);
+  syncLayerUi();
+  syncOps(true);
+});
+
+function syncOps(force = false) {
+  if (!state.session) {
+    if (opsSig !== "off") {
+      opsSig = "off";
+      plant.setOps(null, opsLayers);
+      renderOps(state.lang, null);
+    }
+    return;
+  }
+  const snap = buildOpsSnapshot(opsInputFromSession(state.session, opsElapsed));
+  const sig = JSON.stringify({
+    bottleneck: snap.bottleneck,
+    rows: snap.tools.map((tool) => [tool.util, tool.queue, tool.alarm ? 1 : 0, tool.busy ? 1 : 0]),
+    layers: opsLayers,
+    lang: state.lang,
+  });
+  if (!force && sig === opsSig) return;
+  opsSig = sig;
+  plant.setOps(snap, opsLayers);
+  renderOps(state.lang, snap);
+}
 
 function syncThemeUi() {
   const dock = document.getElementById("theme-dock");
@@ -51,6 +97,7 @@ function attachSession(session) {
     renderAll(state.lang, session, els);
     renderFacility(state.lang, session);
     syncPlantStatus();
+    syncOps(true);
   });
   session.on("transport", () => {
     /* The crane snapshot moves the carrier. Process waits until it is docked. */
@@ -69,6 +116,7 @@ function attachSession(session) {
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
     renderAll(state.lang, session, els);
     syncPlantStatus();
+    syncOps(true);
   });
   session.on("complete", () => {
     plant.settle();
@@ -88,6 +136,7 @@ function attachSession(session) {
   renderFacility(state.lang, session);
   plant.showLot(session.morph, session.step().tool, session.displayCarrier());
   syncPlantStatus();
+  syncOps(true);
 }
 
 function syncPlantStatus() {
@@ -149,6 +198,9 @@ function paintMorph() {
 }
 
 function startLot() {
+  opsElapsed = 0;
+  opsSig = "";
+  plant.setOpsFocus(null);
   const session = new Session({ intensity: state.intensity, role: state.startRole });
   document.querySelectorAll("[data-role]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.role === state.startRole));
@@ -174,7 +226,10 @@ document.getElementById("btn-restart").addEventListener("click", () => {
   plant.clearStatuses();
   plant.showLot("bank", "IQC-11", "FOUP");
   plant.focusOverview();
+  plant.setOpsFocus(null);
+  opsElapsed = 0;
   renderAll(state.lang, null, els);
+  syncOps(true);
 });
 
 document.getElementById("intensity-row").addEventListener("click", (e) => {
@@ -240,9 +295,11 @@ els.btnLang.addEventListener("click", () => {
   const i = LANGS.indexOf(state.lang);
   state.lang = LANGS[(i + 1) % LANGS.length];
   applyStaticI18n(state.lang);
-  plant.setTranslator((k) => t(state.lang, k), state.lang);
+  plant.setTranslator((k, vars) => t(state.lang, k, vars || {}), state.lang);
   syncThemeUi();
+  syncLayerUi();
   renderAll(state.lang, state.session, els);
+  syncOps(true);
   if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
   syncWalkHint();
 });
@@ -299,6 +356,7 @@ document.getElementById("btn-cam-overview").addEventListener("click", () => {
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
   document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
   if (!plant.walking) plant.focusOverview();
+  plant.setOpsFocus(null);
 });
 document.getElementById("btn-cam-walk").addEventListener("click", () => {
   if (plant.walking) plant.exitWalk();
@@ -322,6 +380,7 @@ document.getElementById("btn-cam-tool").addEventListener("click", () => {
   plant.setFollow(false);
   document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
   plant.focusTool(state.session.step().tool);
+  plant.setOpsFocus(state.session.step().tool);
 });
 
 document.getElementById("oht-modes").addEventListener("click", (e) => {
@@ -417,10 +476,12 @@ window.addEventListener("keydown", (e) => {
     document.getElementById("btn-cam-follow").setAttribute("aria-pressed", "false");
     document.getElementById("btn-cam-crane").setAttribute("aria-pressed", "false");
     if (!plant.walking) plant.focusOverview();
+    plant.setOpsFocus(null);
   } else if (e.key === "2") {
     if (!state.session) return;
     if (plant.walking) plant.exitWalk({ overview: false });
     plant.focusTool(state.session.step().tool);
+    plant.setOpsFocus(state.session.step().tool);
   }
 });
 
@@ -435,6 +496,12 @@ function loop(now) {
     plant.holdId = state.session.hold?.id || null;
   }
   state.session?.tick(dt);
+  opsElapsed += dt;
+  opsTick += dt;
+  if (opsTick >= 0.35) {
+    opsTick = 0;
+    syncOps();
+  }
   const spd = state.session ? state.session.speed : 1;
   plant.update(dt, spd);
   renderFacility(state.lang, state.session);
