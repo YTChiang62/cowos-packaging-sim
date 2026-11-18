@@ -30,6 +30,7 @@
       <div>
         <div class="brand-name">APEX-3D</div>
         <div class="brand-sub" data-i18n="brandSub">封装试点线 · 培训原型</div>
+        <div class="hdr-product" id="hdr-product" data-i18n="hdrNoLot">尚未開批</div>
       </div>
     </div>
     <p class="tagline" data-i18n="tagline">CoWoS 类 Chip-on-Wafer-on-Substrate 走站训练 · 建议非指令，不写回任何产线系统</p>
@@ -43,7 +44,7 @@
     </div>
   </header>
 
-  <aside class="lot-dock panel" id="lot-dock">
+  <aside class="lot-dock panel is-hud-hidden" id="lot-dock">
     <div class="kicker" data-i18n="lotKicker">当前批次</div>
     <div class="lot-head">
       <div>
@@ -116,11 +117,13 @@
     <p class="help-hint" data-i18n="helpHint">空白键推进 · F 跟随批次 · 1 总览 · 点击机台查看配方。此为培训原型，不连接真实 MES。</p>
   </aside>
 
-  <div class="radio-dock panel" id="radio-dock"></div>
+  <div class="radio-dock panel" id="radio-dock"><div id="radio-body"></div></div>
 
-  <div class="mes-beats" id="mes-beats"></div>
+  <div class="hud-strip" id="hud-strip"></div>
 
-  <nav class="stage-rail panel" id="stage-rail" aria-label="Process map"></nav>
+  <div class="mes-beats panel" id="mes-beats"><div id="beat-row"></div></div>
+
+  <nav class="stage-rail panel" id="stage-rail" aria-label="Process map"><div id="stage-flow"></div></nav>
 
   <aside class="tool-dock panel" id="tool-dock">
     <div class="tool-name-row">
@@ -166,7 +169,7 @@
     <button type="button" class="ghost-btn" id="btn-jump-tool" data-i18n="btnJumpTool">镜头跳至本站</button>
   </aside>
 
-  <aside class="facility-dock panel" id="facility-dock">
+  <aside class="facility-dock panel is-hud-hidden" id="facility-dock">
     <div class="kicker" data-i18n="whKicker">電子倉庫</div>
     <div class="zone-row" id="wh-zones"></div>
     <div class="wh-table-wrap">
@@ -232,7 +235,7 @@
     </button>
   </div>
 
-  <div class="cam-dock panel">
+  <div class="cam-dock panel" id="cam-dock">
     <button type="button" id="btn-cam-overview" data-i18n="camOverview">總覽</button>
     <button type="button" id="btn-cam-walk" aria-pressed="false" data-i18n="camWalk">步行參觀</button>
     <button type="button" id="btn-cam-follow" aria-pressed="false" data-i18n="camFollow">跟隨批次</button>
@@ -244,41 +247,44 @@
     CoWoS 为先进封装工艺族之通称。本站为虚构培训原型（APEX-3D 封装试点线），非任何真实晶圆厂或原厂产品之数字孪生，亦不会写回实际 MES / ERP。
   </footer>
 
-  <div class="overlay" id="start-layer">
-    <div class="sheet panel">
-      <div class="kicker">APEX-3D</div>
-      <h1 data-i18n="startTitle">封装试点线培训原型</h1>
-      <p class="lede" data-i18n="startLede">在三维厂区里走完一条代表性的 Chip-on-Wafer-on-Substrate 路线：来料与晶粒成套、混合键合、模封研磨、切割、倒装至基板、植球终测与包装。这是可点击的训练台，不是某座真实工厂的数字孪生。</p>
-      <div class="product-card">
-        <svg class="die-thumb" viewBox="0 0 88 88" aria-hidden="true">
-          <rect width="88" height="88" rx="12" fill="#0b181e" stroke="#d3925a" stroke-width="1.2" />
-          <rect x="10" y="62" width="68" height="14" rx="2" fill="#d3925a" />
-          <text x="44" y="72" text-anchor="middle" fill="#1a1008" font-size="7" font-family="Sora,sans-serif" font-weight="700">SUBSTRATE</text>
-          <rect x="18" y="50" width="52" height="10" rx="1.5" fill="#c4a06a" />
-          <rect x="22" y="22" width="22" height="26" rx="2" fill="#dceceb" />
-          <rect x="48" y="30" width="6" height="18" fill="#3ee0c0" />
-          <rect x="56" y="30" width="6" height="18" fill="#3ee0c0" />
-          <rect x="64" y="30" width="6" height="18" fill="#3ee0c0" />
-          <rect x="48" y="24" width="22" height="5" fill="#8aa3a8" />
-        </svg>
-        <div>
-          <h2>HBX-100 CoW-WoS</h2>
-          <p data-i18n="productBlurb">虚构高带宽加速模组：1 颗逻辑 KGD + 4 叠 HBM，先键合于 300 mm 硅中介层晶圆（CoW，混合键合），切割后再倒装至有机基板并植球（WoS）。</p>
+  <div class="overlay catalog-layer" id="start-layer">
+    <div class="sheet panel catalog-sheet">
+      <div id="catalog-list"></div>
+      <div id="catalog-brief" hidden>
+      </div>
+      <div id="start-options">
+        <span class="field-label" data-i18n="intensityLabel">本次跑程問題</span>
+        <div class="choice-row" id="intensity-row">
+          <button type="button" class="choice" data-intensity="none" data-i18n="intNone">無</button>
+          <button type="button" class="choice" data-intensity="few" aria-pressed="true" data-i18n="intFew">少量</button>
+          <button type="button" class="choice" data-intensity="many" data-i18n="intMany">多</button>
         </div>
+        <span class="field-label" data-i18n="startRoleLabel">進線角色</span>
+        <div class="choice-row" id="start-role-row">
+          <button type="button" class="choice" data-start-role="MFG" aria-pressed="true">MFG</button>
+          <button type="button" class="choice" data-start-role="EE">EE</button>
+          <button type="button" class="choice" data-start-role="PE">PE</button>
+        </div>
+        <button type="button" class="primary-btn" id="btn-start" data-i18n="btnStart" disabled>開立訓練批</button>
       </div>
-      <span class="field-label" data-i18n="intensityLabel">本次跑程问题</span>
-      <div class="choice-row" id="intensity-row">
-        <button type="button" class="choice" data-intensity="none" data-i18n="intNone">无</button>
-        <button type="button" class="choice" data-intensity="few" aria-pressed="true" data-i18n="intFew">少量</button>
-        <button type="button" class="choice" data-intensity="many" data-i18n="intMany">多</button>
+    </div>
+  </div>
+
+  <div class="overlay run-layer" id="run-layer" hidden>
+    <div class="sheet panel run-sheet">
+      <div class="kicker">APEX-3D</div>
+      <h1 data-i18n="runTitle">這一批怎麼走</h1>
+      <p class="lede" data-i18n="runLede">先選定。自動走線會一路走到包裝；逐步則做完當前工步就停。</p>
+      <div class="run-choices">
+        <button type="button" class="choice run-choice" id="btn-run-auto">
+          <strong data-i18n="runAuto">一次自動跑完</strong>
+          <small data-i18n="runAutoHint">打開現有的自動走線。</small>
+        </button>
+        <button type="button" class="choice run-choice" id="btn-run-step">
+          <strong data-i18n="runStep">逐步推進</strong>
+          <small data-i18n="runStepHint">做完這一站後等待。</small>
+        </button>
       </div>
-      <span class="field-label" data-i18n="startRoleLabel">进线角色</span>
-      <div class="choice-row" id="start-role-row">
-        <button type="button" class="choice" data-start-role="MFG" aria-pressed="true">MFG</button>
-        <button type="button" class="choice" data-start-role="EE">EE</button>
-        <button type="button" class="choice" data-start-role="PE">PE</button>
-      </div>
-      <button type="button" class="primary-btn" id="btn-start" data-i18n="btnStart">开立训练批</button>
     </div>
   </div>
 

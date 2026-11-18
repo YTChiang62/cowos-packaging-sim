@@ -1,9 +1,11 @@
+import { bindHud } from "./hud.js";
 import { LANGS, t, applyStaticI18n } from "./i18n.js";
 import { THEME_IDS, applyTheme, paletteOf } from "./themes.js";
 import { Session, STEPS } from "./mes.js";
 import { Plant } from "./plant.js";
+import { STATIONS } from "./route.js";
 import {
-  bindUI, renderAll, renderFacility, renderOps, showTool, hideTool, showToast, showRadio, showDone,
+  bindUI, renderAll, renderCatalog, renderFacility, renderOps, showTool, hideTool, showToast, showRadio, showDone,
 } from "./ui.js";
 import { buildOpsSnapshot, opsInputFromSession, readLayers, writeLayers } from "./ops.js";
 
@@ -14,6 +16,8 @@ const state = {
   lang: "zh-TW",
   intensity: "few",
   startRole: "MFG",
+  productId: null,
+  briefing: false,
   session: null,
   selectedTool: null,
 };
@@ -24,6 +28,8 @@ plant.focusOverview();
 
 applyStaticI18n(state.lang);
 els.btnLang.textContent = "繁";
+const hud = bindHud(document, localStorage, (key) => t(state.lang, key));
+renderCatalog(state.lang, { selectedId: state.productId, briefing: state.briefing });
 
 let opsLayers = readLayers(localStorage);
 let opsElapsed = 0;
@@ -135,6 +141,7 @@ function attachSession(session) {
   renderAll(state.lang, session, els);
   renderFacility(state.lang, session);
   plant.showLot(session.morph, session.step().tool, session.displayCarrier());
+  plant.workpiece?.setMark?.(session.product.mark);
   syncPlantStatus();
   syncOps(true);
 }
@@ -162,7 +169,7 @@ function replayStation(stationId) {
   }
   if (s.busy || s.hold) {
     showToast(state.lang, "busyNow");
-    const step = stationId ? STEPS.find((x) => x.id === stationId) : s.step();
+    const step = stationId ? (s.flow || STEPS).find((x) => x.id === stationId) || STATIONS.find((x) => x.id === stationId) : s.step();
     if (step) plant.focusWork(step.tool);
     return;
   }
@@ -177,13 +184,13 @@ function paintMorph() {
   let text;
   let live = false;
   if ((plant.mode === "solo" || plant.mode === "soloHold") && plant.solo) {
-    const st = STEPS.find((x) => x.id === plant.solo.stationId);
+    const st = (s.flow || STEPS).find((x) => x.id === plant.solo.stationId) || STATIONS.find((x) => x.id === plant.solo.stationId);
     text = t(lang, "morphDemo", { name: t(lang, "morph_" + (st?.morphOut || s.morph)) });
     live = true;
   } else if (s.hold) {
     text = `${t(lang, "morph_" + s.morph)} · HOLD`;
   } else if (plant.mode === "live" && plant.live && plant.live.t < 0.98) {
-    const st = STEPS.find((x) => x.id === plant.live.stationId);
+    const st = (s.flow || STEPS).find((x) => x.id === plant.live.stationId) || STATIONS.find((x) => x.id === plant.live.stationId);
     text = `${t(lang, "morph_" + s.morph)} → ${t(lang, "morph_" + st.morphOut)}`;
     live = true;
   } else {
@@ -198,15 +205,22 @@ function paintMorph() {
 }
 
 function startLot() {
+  if (!state.productId || !state.briefing) return;
   opsElapsed = 0;
   opsSig = "";
   plant.setOpsFocus(null);
-  const session = new Session({ intensity: state.intensity, role: state.startRole });
+  const session = new Session({
+    intensity: state.intensity,
+    role: state.startRole,
+    productId: state.productId,
+    awaitChoice: true,
+  });
   document.querySelectorAll("[data-role]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.role === state.startRole));
   });
   plant.setAvatarRole(state.startRole);
   els.startLayer.hidden = true;
+  els.runLayer.hidden = false;
   els.doneLayer.hidden = true;
   els.holdLayer.hidden = true;
   document.getElementById("radio-dock").classList.remove("is-on");
@@ -214,20 +228,46 @@ function startLot() {
   plant.focusOverview();
 }
 
+function chooseRun(mode) {
+  if (!state.session) return;
+  state.session.chooseRun(mode);
+  els.runLayer.hidden = true;
+  renderAll(state.lang, state.session, els);
+}
+
 document.getElementById("btn-start").addEventListener("click", startLot);
+document.getElementById("btn-run-auto").addEventListener("click", () => chooseRun("auto"));
+document.getElementById("btn-run-step").addEventListener("click", () => chooseRun("step"));
+document.getElementById("start-layer").addEventListener("click", (e) => {
+  const card = e.target.closest("[data-product]");
+  if (card) {
+    state.productId = card.dataset.product;
+    state.briefing = true;
+    renderCatalog(state.lang, { selectedId: state.productId, briefing: true });
+    return;
+  }
+  if (e.target.closest("#btn-catalog-back")) {
+    state.briefing = false;
+    renderCatalog(state.lang, { selectedId: state.productId, briefing: false });
+  }
+});
 document.getElementById("btn-restart").addEventListener("click", () => {
   els.doneLayer.hidden = true;
+  els.runLayer.hidden = true;
   els.startLayer.hidden = false;
   state.session = null;
+  state.briefing = false;
   plant.watch(null);
   plant.holdId = null;
   plant.cancelSolo();
   plant.endLive();
   plant.clearStatuses();
+  plant.workpiece?.setMark?.("HBX-100");
   plant.showLot("bank", "IQC-11", "FOUP");
   plant.focusOverview();
   plant.setOpsFocus(null);
   opsElapsed = 0;
+  renderCatalog(state.lang, { selectedId: state.productId, briefing: false });
   renderAll(state.lang, null, els);
   syncOps(true);
 });
@@ -298,6 +338,8 @@ els.btnLang.addEventListener("click", () => {
   plant.setTranslator((k, vars) => t(state.lang, k, vars || {}), state.lang);
   syncThemeUi();
   syncLayerUi();
+  hud.refresh();
+  renderCatalog(state.lang, { selectedId: state.productId, briefing: state.briefing && !state.session });
   renderAll(state.lang, state.session, els);
   syncOps(true);
   if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
@@ -313,6 +355,7 @@ document.getElementById("hold-actions").addEventListener("click", (e) => {
 document.getElementById("tool-close").addEventListener("click", () => {
   state.selectedTool = null;
   hideTool(els);
+  hud.hide("tool-dock");
 });
 document.getElementById("btn-jump-tool").addEventListener("click", () => {
   if (state.selectedTool) {
@@ -348,6 +391,7 @@ plant.onInspect = (id) => {
   if (!id || !plant.walking) return;
   state.selectedTool = id;
   showTool(state.lang, state.session, els, id);
+  hud.show("tool-dock");
 };
 
 document.getElementById("btn-cam-overview").addEventListener("click", () => {
@@ -439,6 +483,7 @@ canvas.addEventListener("pointerup", (e) => {
   if (id) {
     state.selectedTool = id;
     showTool(state.lang, state.session, els, id);
+    hud.show("tool-dock");
   }
   if (plant.walking) plant.requestLook();
 });
@@ -446,8 +491,12 @@ canvas.addEventListener("pointermove", (e) => plant.hover(e.clientX, e.clientY))
 
 window.addEventListener("keydown", (e) => {
   if (e.target.matches("input, textarea")) return;
+  if (els.runLayer.hidden === false) {
+    e.preventDefault();
+    return;
+  }
   if (els.startLayer.hidden === false) {
-    if (e.code === "Enter" || e.code === "Space") {
+    if ((e.code === "Enter" || e.code === "Space") && state.briefing) {
       e.preventDefault();
       startLot();
     }

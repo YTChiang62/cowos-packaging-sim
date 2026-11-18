@@ -32,8 +32,9 @@ function advance(from, dist) {
 }
 
 export class Amhs {
-  constructor(warehouse) {
+  constructor(warehouse, { accepts = portAccepts } = {}) {
     this.wh = warehouse;
+    this.accepts = accepts;
     this.mode = "AUTO";
     this.queue = [];
     this.holdTool = null;
@@ -86,7 +87,7 @@ export class Amhs {
     const carrier = this.wh.get(move.carrierId);
     if (!carrier) return { ok: false, reason: "missing_carrier" };
     if (carrier.status === "transit") return { ok: false, reason: "in_transit" };
-    if (!portAccepts(move.to, carrier.type)) {
+    if (!this.accepts(move.to, carrier.type)) {
       this._refuse(carrier, "type_mismatch", move.to);
       return { ok: false, reason: "type_mismatch" };
     }

@@ -177,6 +177,7 @@ export class Workpiece {
     this.stack.add(this.fillet);
     this.markPlate = box(this.stack, 0.2, 0.008, 0.055, mat(0x1a1c1e, { roughness: 0.4, metalness: 0.2 }), 0, 0.16, 0.08);
     this.mark = makeMark("HBX-100");
+    this._markText = "HBX-100";
     this.stack.add(this.mark);
     g.add(this.stack);
 
@@ -274,6 +275,13 @@ export class Workpiece {
     this.caption.position.set(0, 0.02, 1.28);
     this.caption.scale.set(1.7, 0.34, 1);
     g.add(this.caption);
+  }
+
+  setMark(text) {
+    const next = text || "HBX-100";
+    if (next === this._markText) return;
+    this._markText = next;
+    this.mark?.userData?.redraw?.(next);
   }
 
   setCaption(text) {
@@ -415,16 +423,20 @@ function makeMark(text) {
   cv.width = 256;
   cv.height = 64;
   const g = cv.getContext("2d");
-  g.clearRect(0, 0, 256, 64);
-  g.fillStyle = "#f4efe4";
-  g.font = "700 36px 'Sora', sans-serif";
-  g.textAlign = "center";
-  g.textBaseline = "middle";
-  g.fillText(text, 128, 34);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
   sprite.scale.set(0.42, 0.1, 1);
+  sprite.userData.redraw = (label) => {
+    g.clearRect(0, 0, 256, 64);
+    g.fillStyle = "#f4efe4";
+    g.font = "700 36px 'Sora', sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(label || "", 128, 34);
+    tex.needsUpdate = true;
+  };
+  sprite.userData.redraw(text);
   return sprite;
 }
 

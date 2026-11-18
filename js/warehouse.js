@@ -8,14 +8,14 @@
  */
 import { LEG, ZONES } from "./route.js";
 
-export function seedCarriers(lot, { kgdLocked = false } = {}) {
+export function seedCarriers(lot, { kgdLocked = false, kgdQty = 12 } = {}) {
   const kgd = (id, slot) => ({
     id,
     zone: "DBK",
     type: "TRAY",
     sku: "kgd",
     lotId: null,
-    qty: kgdLocked ? 0 : 12,
+    qty: kgdLocked ? 0 : kgdQty,
     status: kgdLocked ? "locked" : "stock",
     location: `bin:DBK:${slot}`,
     home: `bin:DBK:${slot}`,

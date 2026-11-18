@@ -1,6 +1,7 @@
+import { PRODUCTS } from "./catalog.js";
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
 import { BEATS, STEPS } from "./mes.js";
-import { PORTS, recipeById } from "./route.js";
+import { PORTS, STATIONS, recipeById } from "./route.js";
 
 
 export function bindUI() {
@@ -16,8 +17,8 @@ export function bindUI() {
     lotSites: document.getElementById("lot-sites"),
     lotMorph: document.getElementById("lot-morph"),
     genealogy: document.getElementById("genealogy"),
-    beats: document.getElementById("mes-beats"),
-    stageRail: document.getElementById("stage-rail"),
+    beats: document.getElementById("beat-row"),
+    stageRail: document.getElementById("stage-flow"),
     radio: document.getElementById("radio-dock"),
     toolDock: document.getElementById("tool-dock"),
     toolName: document.getElementById("tool-name"),
@@ -36,6 +37,9 @@ export function bindUI() {
     holdSym: document.getElementById("hold-sym"),
     holdActions: document.getElementById("hold-actions"),
     startLayer: document.getElementById("start-layer"),
+    catalogList: document.getElementById("catalog-list"),
+    catalogBrief: document.getElementById("catalog-brief"),
+    runLayer: document.getElementById("run-layer"),
     doneLayer: document.getElementById("done-layer"),
     doneSummary: document.getElementById("done-summary"),
     toast: document.getElementById("toast"),
@@ -51,29 +55,148 @@ export function renderAll(lang, session, els) {
   applyStaticI18n(lang);
   document.documentElement.lang = lang === "en" ? "en" : lang === "zh-CN" ? "zh-Hans" : "zh-Hant";
   els.btnLang.textContent = LANG_LABEL[lang];
+  paintProduct(lang, session);
   if (!session) return;
   const snap = session.snapshot();
   renderLot(lang, session, snap, els);
   renderBeats(lang, snap, els);
-  renderStages(lang, snap, els);
+  renderStages(lang, snap, els, session.flow);
   renderHold(lang, session, els);
+  const waiting = snap.runChoice == null;
   els.btnAdvance.textContent = t(lang, snap.mode === "beat" ? "btnAdvanceBeat" : "btnAdvance");
   els.btnAuto.setAttribute("aria-pressed", String(!!snap.auto));
   els.btnAuto.textContent = t(lang, snap.auto ? "autoOn" : "autoOff");
-  els.btnPrev.disabled = snap.mode !== "beat" || snap.busy || !!snap.hold || snap.status === "DONE";
-  els.btnAdvance.disabled = snap.status === "DONE" || !!snap.hold || !!snap.busy;
+  els.btnAuto.disabled = waiting || snap.status === "DONE";
+  els.btnPrev.disabled = waiting || snap.mode !== "beat" || snap.busy || !!snap.hold || snap.status === "DONE";
+  els.btnAdvance.disabled = waiting || snap.status === "DONE" || !!snap.hold || !!snap.busy;
+}
+
+function paintProduct(lang, session) {
+  const hdr = document.getElementById("hdr-product");
+  if (!hdr) return;
+  hdr.textContent = session ? t(lang, session.product.nameKey) : t(lang, "hdrNoLot");
+}
+
+export function renderCatalog(lang, { selectedId = null, briefing = false } = {}) {
+  const list = document.getElementById("catalog-list");
+  const brief = document.getElementById("catalog-brief");
+  if (!list || !brief) return;
+  list.hidden = briefing;
+  brief.hidden = !briefing;
+  const options = document.getElementById("start-options");
+  if (options) options.hidden = !briefing;
+  const start = document.getElementById("btn-start");
+  if (start) start.disabled = !briefing;
+  if (!briefing) {
+    list.replaceChildren();
+    const kicker = document.createElement("div");
+    kicker.className = "kicker";
+    kicker.textContent = t(lang, "catalogKicker");
+    const title = document.createElement("h1");
+    title.textContent = t(lang, "catalogTitle");
+    const lede = document.createElement("p");
+    lede.className = "lede";
+    lede.textContent = t(lang, "catalogLede");
+    list.append(kicker, title, lede);
+    for (const product of PRODUCTS) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "catalog-card";
+      card.dataset.product = product.id;
+      card.setAttribute("aria-pressed", String(product.id === selectedId));
+      const name = document.createElement("strong");
+      name.textContent = t(lang, product.nameKey);
+      const blurb = document.createElement("span");
+      blurb.textContent = t(lang, product.blurbKey);
+      const facts = document.createElement("span");
+      facts.className = "catalog-facts";
+      for (const fact of [
+        t(lang, "factSteps", { n: product.steps }),
+        t(lang, "factBays", { n: product.bays.length }),
+        t(lang, "factTools", { n: product.toolsUsed }),
+        ...product.materials.map((key) => t(lang, key)),
+      ]) {
+        const chip = document.createElement("em");
+        chip.textContent = fact;
+        facts.append(chip);
+      }
+      card.append(name, blurb, facts);
+      list.append(card);
+    }
+    return;
+  }
+  const product = PRODUCTS.find((item) => item.id === selectedId) || PRODUCTS[0];
+  brief.replaceChildren();
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "ghost-btn";
+  back.id = "btn-catalog-back";
+  back.textContent = t(lang, "briefBack");
+  const kicker = document.createElement("div");
+  kicker.className = "kicker";
+  kicker.textContent = product.flowId;
+  const title = document.createElement("h1");
+  title.textContent = t(lang, product.nameKey);
+  const story = document.createElement("p");
+  story.className = "lede";
+  story.textContent = t(lang, product.storyKey);
+  const facts = document.createElement("div");
+  facts.className = "catalog-facts";
+  for (const fact of [
+    t(lang, "factSteps", { n: product.steps }),
+    t(lang, "factBays", { n: product.bays.length }),
+    t(lang, "factTools", { n: product.toolsUsed }),
+  ]) {
+    const chip = document.createElement("em");
+    chip.textContent = fact;
+    facts.append(chip);
+  }
+  const matLabel = document.createElement("span");
+  matLabel.className = "field-label";
+  matLabel.textContent = t(lang, "briefMaterials");
+  const mats = document.createElement("div");
+  mats.className = "catalog-facts";
+  for (const key of product.materials) {
+    const chip = document.createElement("em");
+    chip.textContent = t(lang, key);
+    mats.append(chip);
+  }
+  const bayLabel = document.createElement("span");
+  bayLabel.className = "field-label";
+  bayLabel.textContent = t(lang, "bayList");
+  const bays = document.createElement("div");
+  bays.className = "catalog-facts";
+  for (const bay of product.bays) {
+    const chip = document.createElement("em");
+    chip.textContent = t(lang, "bay_" + bay);
+    bays.append(chip);
+  }
+  const stepLabel = document.createElement("span");
+  stepLabel.className = "field-label";
+  stepLabel.textContent = t(lang, "briefSteps");
+  const steps = document.createElement("ol");
+  steps.className = "brief-steps";
+  product.flow.forEach((step, index) => {
+    const li = document.createElement("li");
+    li.textContent = `${index + 1}. ${t(lang, "step_" + step.id)} · ${step.tool}`;
+    steps.append(li);
+  });
+  const note = document.createElement("p");
+  note.className = "help-hint";
+  note.textContent = product.skippedTools.length ? t(lang, "unusedNote") : "";
+  brief.append(back, kicker, title, story, facts, matLabel, mats, bayLabel, bays, stepLabel, steps, note);
 }
 
 export function renderLot(lang, session, snap, els) {
   const { lot, step, status, stepIndex } = snap;
   els.lotId.textContent = lot.id;
-  els.lotProduct.textContent = t(lang, "productName");
+  els.lotProduct.textContent = t(lang, session.product.nameKey);
   els.lotStatus.textContent = status;
   els.lotStatus.className = `badge badge-${status}`;
-  els.lotStep.textContent = `${stepIndex + 1}/${STEPS.length}  ${t(lang, "step_" + step.id)}`;
+  els.lotStep.textContent = `${stepIndex + 1}/${session.flow.length}  ${t(lang, "step_" + step.id)}`;
   els.lotTool.textContent = step.tool;
   els.lotRecipe.textContent = step.recipe;
-  if (els.lotParams) fillParams(lang, step.recipe, els.lotParams);
+  if (els.lotParams) fillParams(lang, step.recipe, els.lotParams, session.product.recipes);
   els.lotSites.textContent = t(lang, "sitesLine", {
     good: lot.goodSites,
     total: lot.totalSites,
@@ -121,9 +244,9 @@ function paramLabel(lang, param) {
   return label === key ? param.name : label;
 }
 
-export function fillParams(lang, recipeId, el) {
+export function fillParams(lang, recipeId, el, recipes) {
   el.replaceChildren();
-  const recipe = recipeById(recipeId);
+  const recipe = (recipes && recipes[recipeId]) || recipeById(recipeId);
   if (!recipe) return;
   for (const param of recipe.params) {
     const row = document.createElement("span");
@@ -134,12 +257,12 @@ export function fillParams(lang, recipeId, el) {
   }
 }
 
-export function renderStages(lang, snap, els) {
+export function renderStages(lang, snap, els, flow = STEPS) {
   els.stageRail.innerHTML = "";
   let lastBay = null;
   let current = null;
-  for (let i = 0; i < STEPS.length; i++) {
-    const st = STEPS[i];
+  for (let i = 0; i < flow.length; i++) {
+    const st = flow[i];
     if (st.bay !== lastBay) {
       const lab = document.createElement("span");
       lab.className = "flow-bay";
@@ -203,7 +326,9 @@ function writeLive(els, lang, { state, carrier, morph, hold, lot }) {
 }
 
 export function showTool(lang, session, els, toolId) {
-  const step = STEPS.find((s) => s.tool === toolId);
+  const flow = session?.flow || STEPS;
+  const step = flow.find((s) => s.tool === toolId);
+  const equipped = STATIONS.find((s) => s.tool === toolId);
   els.toolDock.classList.add("is-on");
   if (toolId === "stocker") {
     const carriers = session?.facility?.snapshot?.().carriers || [];
@@ -232,10 +357,15 @@ export function showTool(lang, session, els, toolId) {
   if (step) {
     els.toolGroup.textContent = t(lang, "bay_" + step.bay);
     els.toolRecipe.textContent = step.recipe;
-    if (els.toolParams) fillParams(lang, step.recipe, els.toolParams);
+    if (els.toolParams) fillParams(lang, step.recipe, els.toolParams, session?.product?.recipes);
     if (els.toolContract) {
       els.toolContract.textContent = `${t(lang, "chg_" + step.id)} ${t(lang, "out_" + step.id)}`;
     }
+  } else if (equipped) {
+    els.toolGroup.textContent = t(lang, "bay_" + equipped.bay);
+    els.toolRecipe.textContent = "—";
+    if (els.toolParams) els.toolParams.replaceChildren();
+    if (els.toolContract) els.toolContract.textContent = t(lang, "toolOffRoute");
   } else {
     els.toolGroup.textContent = "—";
     els.toolRecipe.textContent = "—";
@@ -280,7 +410,9 @@ export function showToast(lang, key, vars) {
 
 export function showRadio(lang, key) {
   const el = document.getElementById("radio-dock");
-  el.innerHTML = t(lang, key);
+  const body = document.getElementById("radio-body");
+  if (body) body.innerHTML = t(lang, key);
+  else el.innerHTML = t(lang, key);
   el.classList.add("is-on");
 }
 
