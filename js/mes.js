@@ -1,7 +1,7 @@
+import { committedMorphOf, productById } from "./catalog.js";
 import { Facility } from "./facility.js";
 import {
   HOLD_AT,
-  HOLDS,
   PUTAWAY,
   STATIONS,
   committedMorph,
@@ -22,47 +22,58 @@ export function pad(n, w = 4) {
   return String(n).padStart(w, "0");
 }
 
-function makeLot() {
+function makeLot(product) {
   const n = 100 + Math.floor(Math.random() * 8900);
   const w = 20 + Math.floor(Math.random() * 80);
   const logic = 4000 + Math.floor(Math.random() * 5000);
   const hbmBase = 7000 + Math.floor(Math.random() * 2000);
   const sub = 300 + Math.floor(Math.random() * 600);
+  const sites = product?.sites || 12;
+  const hbmCount = product?.hbmCount ?? 4;
+  const sku = (product?.id || "HBX-100").replace("-", "");
   return {
     id: `APX2602-${pad(n)}`,
-    product: "HBX-100",
-    wafer: `IPW-2602-${pad(w, 3)}`,
+    product: product?.id || "HBX-100",
+    flowId: product?.flowId || "HBX-100-COW-WOS",
+    wafer: product?.id === "HBX-S12" ? `KGD-2602-${pad(w, 3)}` : `IPW-2602-${pad(w, 3)}`,
     logic: `LGC-KGD-${logic}`,
-    hbm: [0, 1, 2, 3].map((i) => `HBM-${hbmBase}-${pad(i + 1, 2)}`),
+    hbm: Array.from({ length: hbmCount }, (_, i) => `HBM-${hbmBase}-${pad(i + 1, 2)}`),
     substrate: `OSB-88-${pad(sub, 3)}`,
-    unit: `HBX100-2602-${pad(n)}`,
-    totalSites: 12,
-    goodSites: 12,
+    unit: `${sku}-2602-${pad(n)}`,
+    totalSites: sites,
+    goodSites: sites,
     scrap: 0,
     notes: [],
   };
 }
 
 export class Session {
-  constructor({ intensity = "few", role = "MFG" } = {}) {
+  constructor({ intensity = "few", role = "MFG", productId = "HBX-100", awaitChoice = false } = {}) {
+    this.product = productById(productId) || productById("HBX-100");
+    this.flow = this.product.flow;
     this.intensity = intensity;
     this.role = role;
     this.speed = 1;
     this.auto = false;
     this.mode = "station";
+    this.runChoice = awaitChoice ? null : "step";
     this.stepIndex = 0;
     this.beatIndex = 0;
     this.status = "QUEUE";
     this.busy = false;
     this.hold = null;
     this.holdsResolved = [];
-    this.plannedHolds = new Set(planHolds(intensity));
+    this.plannedHolds = new Set(
+      planHolds(intensity).filter((id) => this.product.holds[id])
+    );
     this.firedHolds = new Set();
-    this.lot = makeLot();
+    this.lot = makeLot(this.product);
     this.facility = new Facility({
       lot: this.lot,
       kgdLocked: this.plannedHolds.has("kgd"),
       mode: "AUTO",
+      rules: this.product.rules,
+      kgdQty: this.product.kgdQty,
     });
     this._putawayStarted = false;
     this.listeners = new Map();
@@ -87,11 +98,14 @@ export class Session {
   }
 
   step() {
-    return STATIONS[Math.min(this.stepIndex, STATIONS.length - 1)];
+    return this.flow[Math.min(this.stepIndex, this.flow.length - 1)];
   }
 
   get morph() {
-    return committedMorph(this.stepIndex, this.beatIndex, !!this.hold, PROCESS_BEAT);
+    if (this.product.id === "HBX-100") {
+      return committedMorph(this.stepIndex, this.beatIndex, !!this.hold, PROCESS_BEAT);
+    }
+    return committedMorphOf(this.flow, this.stepIndex, this.beatIndex, !!this.hold, PROCESS_BEAT);
   }
 
   get awaitingTransport() {
@@ -106,10 +120,11 @@ export class Session {
   peekHold() {
     const step = this.step();
     if (this.firedHolds.has(step.id)) return null;
-    const id = Object.keys(HOLDS).find(
-      (hid) => HOLDS[hid].stationId === step.id && this.plannedHolds.has(hid)
+    const holds = this.product.holds;
+    const id = Object.keys(holds).find(
+      (hid) => holds[hid].stationId === step.id && this.plannedHolds.has(hid)
     );
-    return id ? HOLDS[id] : null;
+    return id ? holds[id] : null;
   }
 
   snapshot() {
@@ -123,6 +138,8 @@ export class Session {
       busy: this.busy,
       auto: this.auto,
       mode: this.mode,
+      runChoice: this.runChoice,
+      productId: this.product.id,
       speed: this.speed,
       role: this.role,
       hold: this.hold,
@@ -152,8 +169,20 @@ export class Session {
     this.change();
   }
 
+  chooseRun(mode) {
+    if (mode !== "auto" && mode !== "step") return false;
+    if (this.status === "DONE") return false;
+    this.runChoice = mode;
+    if (mode === "auto") this.setAuto(true);
+    else {
+      this.auto = false;
+      this.change();
+    }
+    return true;
+  }
+
   setAuto(on) {
-    if (this.status === "DONE") return;
+    if (this.status === "DONE" || this.runChoice == null) return;
     this.auto = on;
     if (on && this.facility.mode !== "PAUSE") this.facility.setMode("AUTO");
     if (on && !this.busy && !this.hold) this.advance();
@@ -161,6 +190,10 @@ export class Session {
   }
 
   advance() {
+    if (this.runChoice == null) {
+      this.emit("toast", { key: "needRunChoice" });
+      return false;
+    }
     if (this.status === "DONE") {
       this.emit("toast", { key: "alreadyDone" });
       return false;
@@ -294,7 +327,7 @@ export class Session {
   }
 
   _openHold(id) {
-    const def = HOLDS[id];
+    const def = this.product.holds[id];
     this.facility.onHold(def.stationId);
     this.hold = { id, ...def, waiting: false };
     this.busy = false;
@@ -335,7 +368,7 @@ export class Session {
     }
 
     if (action.id === "rework") {
-      const back = STATIONS.findIndex((s) => s.id === action.backTo);
+      const back = this.flow.findIndex((s) => s.id === action.backTo);
       const stationId = this.hold.stationId;
       this.holdsResolved.push({ id: this.hold.id, action: "rework" });
       this.facility.onHoldCleared({ action: "rework", stationId, qty: this.lot.goodSites });
@@ -439,7 +472,7 @@ export class Session {
       this._applyProcessEffects(step);
     }
     if (beat === "track-out") {
-      if (this.stepIndex >= STATIONS.length - 1) {
+      if (this.stepIndex >= this.flow.length - 1) {
         this.status = "DONE";
         this.busy = false;
         this.auto = false;
@@ -481,19 +514,19 @@ export class Session {
 
   /** Carrier model while the lot is moving into this station. */
   travelCarrier() {
-    if (this.stepIndex <= 0) return STATIONS[0].carrier;
-    return STATIONS[this.stepIndex - 1].carrier;
+    if (this.stepIndex <= 0) return this.flow[0].carrier;
+    return this.flow[this.stepIndex - 1].carrier;
   }
 
   /** Carrier the contract shows for the station the lot is actually on. */
   displayCarrier() {
     const idx = this.beatIndex <= 1 && this.stepIndex > 0 ? this.stepIndex - 1 : this.stepIndex;
-    return STATIONS[idx].carrier;
+    return this.flow[idx].carrier;
   }
 
   carrierStation() {
     const idx = this.beatIndex <= 1 && this.stepIndex > 0 ? this.stepIndex - 1 : this.stepIndex;
-    return STATIONS[idx];
+    return this.flow[idx];
   }
 
   genealogy() {

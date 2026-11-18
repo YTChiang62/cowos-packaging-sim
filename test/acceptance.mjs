@@ -6,9 +6,12 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { BEATS, Session } from "../js/mes.js";
 import {
+  DOCK_REQUIREMENTS,
   FLOW,
   FLOW_ID,
   HOLDS,
+  OUTPUT_PRESENT,
+  PORTS,
   LOAD_LOCAL_Z,
   MORPHS,
   RAIL_NODES,
@@ -20,7 +23,7 @@ import {
   opThatCommits,
   recipeById,
 } from "../js/route.js";
-import { frame, motion, posesEqual } from "../js/morph.js";
+import { frame, motion, poseSkipToWos, posesEqual } from "../js/morph.js";
 import {
   FACILITY_ROOMS,
   OVERVIEW_CAMERA,
@@ -43,6 +46,19 @@ import {
   toolSolid,
   wallSolids,
 } from "../js/walk.js";
+import { productById } from "../js/catalog.js";
+import {
+  HUD_PANELS,
+  HUD_STORAGE_KEY,
+  defaultHudState,
+  dragStartsOnChrome,
+  hidePanel,
+  movePanel,
+  readHud,
+  showPanel,
+  toggleFocus,
+  writeHud,
+} from "../js/hud.js";
 import { hasOwnCopy, t } from "../js/i18n.js";
 import {
   LOAD_THRESHOLD,
@@ -1377,6 +1393,150 @@ check(
   "English crane labels stay Auto dispatch / Manual call / Pause",
   t("en", "modeAuto") === "Auto dispatch" && t("en", "modeManual") === "Manual call" && t("en", "modePause") === "Pause"
 );
+
+const hbx100 = productById("HBX-100");
+check("HBX-100 spine is the existing flow and recipe table", hbx100.flow === FLOW && hbx100.recipes === RECIPES && hbx100.flowId === "HBX-100-COW-WOS");
+check("HBX-100 holds and morphs stay on the route contract", hbx100.holds === HOLDS && hbx100.morphs.join(",") === MORPHS.join(","));
+check("HBX-100 does not replace dock or frame rules", hbx100.rules == null && OUTPUT_PRESENT.mount.type === "FRAME");
+
+const hbx240 = productById("HBX-240");
+check("HBX-240 keeps the 21-step tool order", hbx240.flow.map((s) => `${s.id}:${s.tool}`).join(",") === FLOW.map((s) => `${s.id}:${s.tool}`).join(","));
+check("HBX-240 has its own flow id and recipe table", hbx240.flowId === "HBX-240-COW-WOS" && hbx240.recipes !== RECIPES && hbx240.flow !== FLOW);
+check("HBX-240 reuses the HBX-100 dock and frame rules", hbx240.rules.docks === DOCK_REQUIREMENTS && hbx240.rules.output === OUTPUT_PRESENT);
+check(
+  "HBX-240 issues more KGD and tightens overlay and warpage",
+  hbx240.recipes["KGD-ISSUE-240"].params.find((p) => p.id === "qty").value === 20 &&
+    hbx240.recipes["MET-OVL-240"].params.find((p) => p.id === "limit").value === 0.6 &&
+    hbx240.recipes["MET-WRP-240"].params.find((p) => p.id === "limit").value === 45
+);
+check(
+  "HBX-240 ball map, final test, and mark differ from HBX-100",
+  hbx240.recipes["BALL-ATT-240"].params.find((p) => p.id === "count").value === 64 &&
+    hbx240.recipes["FT-HBX-240"].params.find((p) => p.id === "program").value === "FT-HBX240-B7" &&
+    hbx240.recipes["MARK-240"].params.find((p) => p.id === "content").value === "HBX240" &&
+    RECIPES["MARK-01"].params.find((p) => p.id === "content").value === "HBX100"
+);
+{
+  const lot = new Session({ productId: "HBX-240", intensity: "none" });
+  check(
+    "HBX-240 warehouse still stocks INT DBK SUB FG and issues a larger KGD tray",
+    lot.facility.wh.carriers.some((c) => c.zone === "INT") &&
+      lot.facility.wh.carriers.find((c) => c.sku === "kgd").qty === 20
+  );
+}
+
+const s12 = productById("HBX-S12");
+const skippedTools = ["PLS-11", "HB-21", "ANN-22", "MET-23", "BG-24", "MNT-80", "DIC-81", "AOI-82"];
+check("HBX-S12 is a shorter substrate route", s12.flow.length >= 12 && s12.flow.length <= 14 && s12.flowId === "HBX-S12-SUB");
+check(
+  "HBX-S12 skips hybrid bond and dicing",
+  !s12.flow.some((step) => ["hbond", "dice", "plasma", "mount", "backgrind", "overlay"].includes(step.id)) &&
+    skippedTools.every((tool) => !s12.flow.some((step) => step.tool === tool))
+);
+check(
+  "HBX-S12 morphs skip bonded, thinned, and singulated",
+  s12.morphs.join(",") === "bank,issued,wos,underfilled,balled,packed" &&
+    s12.flow[0].morphIn === "bank" &&
+    s12.flow.at(-1).morphOut === "packed"
+);
+check(
+  "HBX-S12 has no FRAME and does not issue INT",
+  !JSON.stringify(s12.rules.docks).includes("INT") &&
+    !JSON.stringify(s12.rules.output).includes("FRAME") &&
+    !s12.rules.docks.iqc.some((req) => req.zone === "INT" || req.type === "FOUP")
+);
+check("HBX-S12 does not change the shared IQC port contract", PORTS["IQC-11"].accept.join(",") === "FOUP");
+check(
+  "S12 attach starts from issued dice, not a singulated wafer",
+  poseSkipToWos(0).frameOp < 0.05 && poseSkipToWos(1).frameOp < 0.05 && poseSkipToWos(1).sub.op > 0.9 && poseSkipToWos(1).wafer.op < 0.05
+);
+
+function visitedTools(session) {
+  const tools = new Set();
+  for (const move of session.facility.moves) {
+    const port = String(move.to);
+    for (const step of FLOW) {
+      if (port === step.tool || port.startsWith(`${step.tool}:`)) tools.add(step.tool);
+    }
+  }
+  return tools;
+}
+
+{
+  const undecided = new Session({ intensity: "none", awaitChoice: true });
+  check("a new lot waits for auto or step", undecided.runChoice == null && undecided.advance() === false && undecided.stepIndex === 0 && !undecided.busy);
+  const stepped = new Session({ intensity: "none", awaitChoice: true });
+  check("step choice leaves auto-run off", stepped.chooseRun("step") === true && stepped.auto === false && stepped.runChoice === "step");
+  check("step advance starts the current operation", stepped.advance() === true);
+  pump(stepped);
+  check(
+    "step mode waits after one operation",
+    stepped.stepIndex === 1 && stepped.beatIndex === 0 && stepped.busy === false && stepped.auto === false && stepped.status !== "DONE"
+  );
+  const auto = new Session({ productId: "HBX-S12", intensity: "none", awaitChoice: true });
+  check("auto choice turns on the existing auto-run", auto.chooseRun("auto") === true && auto.auto === true);
+  pump(auto);
+  check("auto-run walks the selected flow to pack", auto.status === "DONE" && auto.step().id === "pack" && auto.morph === "packed");
+  const seen = visitedTools(auto);
+  check("HBX-S12 crane does not visit skipped CoW or dice tools", skippedTools.every((tool) => !seen.has(tool)));
+  check(
+    "HBX-S12 leaves INT stocked and never creates a FRAME",
+    auto.facility.wh.carriers.filter((c) => c.zone === "INT").every((c) => String(c.location).startsWith("bin:INT") && c.status === "stock") &&
+      auto.facility.wh.carriers.every((c) => c.type !== "FRAME")
+  );
+  const morphs = [];
+  const walkS12 = new Session({ productId: "HBX-S12", intensity: "none" });
+  while (walkS12.status !== "DONE") {
+    walkS12.advance();
+    pump(walkS12);
+    morphs.push(walkS12.morph);
+  }
+  check(
+    "HBX-S12 never commits bonded, thinned, or singulated",
+    morphs.every((morph) => !["bonded", "thinned", "singulated"].includes(morph)) && morphs.at(-1) === "packed"
+  );
+}
+
+{
+  const fresh = defaultHudState();
+  check(
+    "large left and right docks start tucked",
+    fresh.panels["lot-dock"].hidden === true && fresh.panels["facility-dock"].hidden === true && fresh.focus === false
+  );
+  const hidden = hidePanel(fresh, "theme-dock");
+  const moved = movePanel(hidden, "cam-dock", 48, 96);
+  const store = memStore();
+  writeHud(moved, store);
+  const loaded = readHud(store);
+  check("hud hidden state and position persist", store.getItem(HUD_STORAGE_KEY) && loaded.panels["theme-dock"].hidden === true && loaded.panels["cam-dock"].x === 48 && loaded.panels["cam-dock"].y === 96);
+  const restored = showPanel(loaded, "theme-dock");
+  check("a hidden panel can be restored", restored.panels["theme-dock"].hidden === false && restored.panels["cam-dock"].x === 48);
+  const focused = toggleFocus(restored);
+  check(
+    "focus mode clears the large docks",
+    focused.focus === true && HUD_PANELS.filter((panel) => panel.large).every((panel) => focused.panels[panel.id].hidden === true)
+  );
+  const back = toggleFocus(focused);
+  check("leaving focus restores the previous large docks", back.focus === false && back.panels["theme-dock"].hidden === false && back.panels["lot-dock"].hidden === true && back.panels["stage-rail"].hidden === false);
+  const canvas = { id: "view", nodeName: "CANVAS", closest: () => null };
+  const grip = { closest: (sel) => (String(sel).includes("hud-grip") ? {} : null) };
+  check("hud drag starts on panel chrome, not the walk canvas", dragStartsOnChrome(grip) === true && dragStartsOnChrome(canvas) === false);
+  const before = buildSolids().length;
+  readHud(memStore({ [HUD_STORAGE_KEY]: store.getItem(HUD_STORAGE_KEY) }));
+  check("hud chrome does not add walk solids", buildSolids().length === before && buildSolids().every((solid) => solid.kind !== "hud"));
+}
+check("an empty hud store uses the tucked default", readHud(memStore()).panels["lot-dock"].hidden === true);
+check("a broken hud store falls back instead of throwing", readHud(memStore({ [HUD_STORAGE_KEY]: "{" })).panels["facility-dock"].hidden === true);
+{
+  const opsHud = defaultHudState();
+  const tucked = hidePanel(hidePanel(opsHud, "ops-card"), "ops-layers");
+  check(
+    "ops card and factory layers can be hidden and restored",
+    tucked.panels["ops-card"].hidden === true &&
+      tucked.panels["ops-layers"].hidden === true &&
+      showPanel(showPanel(tucked, "ops-card"), "ops-layers").panels["ops-layers"].hidden === false
+  );
+}
 
 if (failed) {
   console.error(`\n${failed} check(s) failed`);

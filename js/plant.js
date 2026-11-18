@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "../vendor/OrbitControls.js";
 import { FacilityView } from "./facility-view.js";
 import { HOLD_AT, RAIL_NODES, RAIL_Y, STATIONS, stationById } from "./route.js";
-import { motion, smooth, specForMorph } from "./morph.js";
+import { motion, poseSkipToWos, smooth, specForMorph } from "./morph.js";
 import { Workpiece } from "./product.js";
 import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
@@ -498,6 +498,9 @@ export class Plant {
 
   _apply(stationId, t, fault) {
     const m = motion(stationId, t, fault);
+    if (this.session?.product?.skipWaferMorph && stationId === "wos") {
+      m.pose = poseSkipToWos(t);
+    }
     this.workpiece.applyPose(m.pose, this.workpiece.compact);
     const station = stationById(stationId);
     const rec = this.tools.get(station.tool);

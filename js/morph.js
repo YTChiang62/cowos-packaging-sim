@@ -204,6 +204,17 @@ function holdBlend(good, bad, u, f, span) {
   return blend(good, bad, f * k);
 }
 
+/**
+ * HBX-S12 attach starts from issued dice, not a singulated wafer.
+ * HBX-100 `frame("wos")` is unchanged.
+ */
+export function poseSkipToWos(t) {
+  const u = Math.min(1, Math.max(0, t));
+  const enter = smooth(Math.min(1, u / 0.5));
+  const seat = smooth(Math.min(1, u / 0.75));
+  return blend(poseIssued(), poseWos(0, seat), Math.max(enter, seat));
+}
+
 /** Pose for one operation at time t (0..1) and fault (0 good, 1 held). */
 export function frame(station, t, fault = 0) {
   const f = Math.min(1, Math.max(0, fault));

@@ -16,10 +16,12 @@ import {
 import { Warehouse, seedCarriers } from "./warehouse.js";
 
 export class Facility {
-  constructor({ lot, kgdLocked = false, mode = "AUTO" } = {}) {
+  constructor({ lot, kgdLocked = false, mode = "AUTO", rules = null, kgdQty = 12 } = {}) {
     this.lotId = lot?.id || "LOT";
-    this.wh = new Warehouse(seedCarriers(lot, { kgdLocked }));
-    this.amhs = new Amhs(this.wh);
+    this.rules = rules || null;
+    this.kgdQty = rules?.kgdQty || kgdQty || 12;
+    this.wh = new Warehouse(seedCarriers(lot, { kgdLocked, kgdQty: this.kgdQty }));
+    this.amhs = new Amhs(this.wh, { accepts: (port, type) => this._accepts(port, type) });
     this.amhs.setMode(mode);
     this.moves = [];
     this.gate = [];
@@ -137,9 +139,34 @@ export class Facility {
    * to the next tool. Mount and WoS are the only carrier conversions.
    */
   presentOutput(stationId) {
-    const present = OUTPUT_PRESENT[stationId];
+    const present = (this.rules?.output || OUTPUT_PRESENT)[stationId];
     if (!present) return;
     const tool = stationById(stationId).tool;
+    if (present.borrow) {
+      for (const carrier of this.wh.carriers) {
+        const here = carrier.location === `tool:${tool}` || carrier.location === `port:${present.port}`;
+        if (!here || carrier.type !== present.type) continue;
+        carrier.lotId = null;
+        carrier._return = true;
+        this._toPort(carrier, present.port);
+        this._enqueue(carrier, `io:${present.returnZone}`, "return");
+      }
+      return;
+    }
+    if (present.sideReturn) {
+      for (const carrier of this.wh.carriers) {
+        const here = carrier.location === `tool:${tool}` || String(carrier.location).startsWith(`port:${tool}`);
+        if (carrier.sku !== present.returnSku || !here) continue;
+        carrier.lotId = null;
+        carrier._return = true;
+        const src = this._portFor(tool, carrier.type);
+        if (src) this._toPort(carrier, src);
+        this._enqueue(carrier, `io:${present.returnZone}`, "return");
+      }
+      const lot = this.wh.get(this.lotCarrierId);
+      if (lot) this._toPort(lot, present.port);
+      return;
+    }
     if (present.markKgd) {
       const lot = this.wh.get(this.lotCarrierId);
       if (lot) this._toPort(lot, present.port);
@@ -216,9 +243,10 @@ export class Facility {
   beginPutaway() {
     const carrier = this.wh.get(this.lotCarrierId);
     if (!carrier) return { ok: false, reason: "missing_carrier" };
+    const putaway = this._putaway();
     carrier.sku = "finished";
-    carrier.zone = PUTAWAY.zone;
-    if (String(carrier.location).startsWith(`bin:${PUTAWAY.zone}:`)) {
+    carrier.zone = putaway.zone;
+    if (String(carrier.location).startsWith(`bin:${putaway.zone}:`)) {
       this._instant = true;
       this.gate = [];
       return { ok: true, done: true };
@@ -227,7 +255,7 @@ export class Facility {
       const port = this._portFor(carrier.location.slice(5), carrier.type) || "PCK-56";
       this._toPort(carrier, port);
     }
-    const move = this._enqueue(carrier, PUTAWAY.port, "putaway");
+    const move = this._enqueue(carrier, putaway.port, "putaway");
     this._instant = false;
     this.gate = [move.id];
     return { ok: true, done: false };
@@ -245,7 +273,7 @@ export class Facility {
     this.holdOpen = false;
     this.amhs.clearHold();
     if (stationId === "diebank" && (action === "wait" || action === "partial" || action === "release")) {
-      this.wh.replenishKgd(action === "partial" ? qty : 12);
+      this.wh.replenishKgd(action === "partial" ? qty : this.kgdQty);
       return;
     }
     const tool = stationById(stationId)?.tool;
@@ -255,7 +283,7 @@ export class Facility {
   requestMove({ carrierId, to }) {
     const carrier = this.wh.get(carrierId);
     if (!carrier) return { ok: false, reason: "missing_carrier" };
-    if (!portAccepts(to, carrier.type)) {
+    if (!this._accepts(to, carrier.type)) {
       this.lastRefusal = "type_mismatch";
       this.wh.pushLog({
         kind: "refuse", reason: "type_mismatch", zone: carrier.zone, carrierId: carrier.id,
@@ -299,7 +327,7 @@ export class Facility {
     const zone = returnZoneFor(carrier);
     if (!zone) return { ok: false, reason: "no_zone" };
     const dest = `io:${zone}`;
-    if (!portAccepts(dest, carrier.type)) return { ok: false, reason: "type_mismatch" };
+    if (!this._accepts(dest, carrier.type)) return { ok: false, reason: "type_mismatch" };
     if (this.holdOpen && PORTS[dest]?.tool) return { ok: false, reason: "hold_blocks_delivery" };
     carrier._return = true;
     if (carrier.status === "locked") carrier.status = "reserved";
@@ -371,7 +399,8 @@ export class Facility {
 
   _activeReqs(stationId) {
     const lotType = this._lotType();
-    return (DOCK_REQUIREMENTS[stationId] || []).filter((req) => {
+    const docks = this.rules?.docks || DOCK_REQUIREMENTS;
+    return (docks[stationId] || []).filter((req) => {
       if (req.unlessLot && req.unlessLot === lotType) return false;
       if (req.onlyLot && req.onlyLot !== lotType) return false;
       return true;
@@ -483,7 +512,17 @@ export class Facility {
     if (carrier.status !== "locked") carrier.status = "reserved";
   }
 
+  _putaway() {
+    return this.rules?.putaway || PUTAWAY;
+  }
+
+  _accepts(portId, type) {
+    if (portAccepts(portId, type)) return true;
+    const extra = this.rules?.acceptExtra?.[portId];
+    return Array.isArray(extra) && extra.includes(type);
+  }
+
   _portFor(tool, type) {
-    return Object.keys(PORTS).find((id) => PORTS[id].tool === tool && PORTS[id].accept.includes(type)) || null;
+    return Object.keys(PORTS).find((id) => PORTS[id].tool === tool && this._accepts(id, type)) || null;
   }
 }
