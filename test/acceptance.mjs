@@ -20,9 +20,13 @@ import {
 } from "../js/route.js";
 import { frame, motion, posesEqual } from "../js/morph.js";
 import {
+  FACILITY_ROOMS,
   OVERVIEW_CAMERA,
   PERSON_RADIUS,
   PLANT_FLOOR,
+  PLANT_WALLS,
+  RETURN_AIR,
+  ROOM_WALL_T,
   TOOL_HALF_X,
   TOOL_VISUAL_SCALE,
   TOOL_Z_MAX,
@@ -37,6 +41,7 @@ import {
   toolSolid,
   wallSolids,
 } from "../js/walk.js";
+import { t } from "../js/i18n.js";
 import {
   DEFAULT_THEME,
   THEME_IDS,
@@ -67,6 +72,16 @@ const ORDER = [
   "ball", "reflow", "fluxclean", "ftest", "mark", "pack",
 ];
 check("flow has 21 operations in order", FLOW.map((s) => s.id).join(",") === ORDER.join(","));
+const RECIPE_IDS = [
+  "IQC-INSP-01", "KGD-ISSUE-01", "PLASMA-COW-01", "HBOND-COW-02", "ANNEAL-COW-01",
+  "MET-OVL-01", "BG-COW-01", "MOUNT-01", "DICE-COW-01", "AOI-DICE-01",
+  "BAKE-SUB-01", "WOS-ATTACH-01", "UF-DISP-01", "UF-CURE-01", "MET-WRP-01",
+  "BALL-ATT-01", "REFLOW-BGA-01", "FLUX-CLN-01", "FT-HBX-01", "MARK-01", "PACK-TRAY-01",
+];
+check(
+  "recipe ids are unchanged",
+  Object.keys(RECIPES).join(",") === RECIPE_IDS.join(",") && FLOW_ID === "HBX-100-COW-WOS"
+);
 check(
   "morph chain is bank→issued→bonded→thinned→singulated→wos→underfilled→balled→packed",
   MORPHS.join(",") === "bank,issued,bonded,thinned,singulated,wos,underfilled,balled,packed"
@@ -755,6 +770,7 @@ check("switching theme does not change recipe ids", JSON.stringify(Object.keys(R
 
 const footprint = buildSolids().filter((solid) => solid.kind === "tool");
 check("equipment footprints are still the 21 tool solids", footprint.length === 21);
+check("tool visual scale stays 1.55", TOOL_VISUAL_SCALE === 1.55);
 check(
   "tool solids use the enlarged shared footprint",
   TOOL_VISUAL_SCALE >= 1.4 &&
@@ -896,6 +912,174 @@ check(
 );
 const themeLeft = themeWalk.exit();
 check("theme switching leaves walk exit intact", themeWalk.active === false && themeLeft.mode === "overview" && themeLeft.controls === true);
+
+check(
+  "crane labels stay 自動派車 / 手動叫車 / 暫停",
+  t("zh-TW", "modeAuto") === "自動派車" &&
+    t("zh-TW", "modeManual") === "手動叫車" &&
+    t("zh-TW", "modePause") === "暫停" &&
+    t("zh-CN", "modeAuto") === "自动派车" &&
+    t("zh-CN", "modeManual") === "手动叫车" &&
+    t("zh-CN", "modePause") === "暂停" &&
+    t("en", "modeAuto") === "Auto dispatch" &&
+    t("en", "modeManual") === "Manual call" &&
+    t("en", "modePause") === "Pause"
+);
+check(
+  "facility room labels exist in zh-TW, zh-CN, and English",
+  t("zh-TW", "room_ahu") === "空調機房" &&
+    t("zh-TW", "room_return") === "回風夾道" &&
+    t("zh-TW", "room_gowning") === "更衣室" &&
+    t("zh-TW", "room_duty") === "值班室" &&
+    t("zh-CN", "room_ahu") === "空调机房" &&
+    t("zh-CN", "room_return") === "回风夹道" &&
+    t("zh-CN", "room_gowning") === "更衣室" &&
+    t("zh-CN", "room_duty") === "值班室" &&
+    t("en", "room_ahu") === "AHU" &&
+    t("en", "room_return") === "Return air" &&
+    t("en", "room_gowning") === "Gowning" &&
+    t("en", "room_duty") === "Duty room"
+);
+
+function rectCovers(outer, inner) {
+  return inner.minX >= outer.minX && inner.maxX <= outer.maxX && inner.minZ >= outer.minZ && inner.maxZ <= outer.maxZ;
+}
+function rectsOverlap(a, b) {
+  return a.minX < b.maxX && a.maxX > b.minX && a.minZ < b.maxZ && a.maxZ > b.minZ;
+}
+const wallRect = {
+  minX: PLANT_WALLS.west,
+  maxX: PLANT_WALLS.east,
+  minZ: PLANT_WALLS.north,
+  maxZ: PLANT_WALLS.south,
+};
+check("the floor slab contains the glass envelope", rectCovers(PLANT_FLOOR, wallRect));
+check(
+  "the envelope contains the stocker and every tool",
+  wallRect.minX < STOCKER.place.x - 3 &&
+    wallRect.maxX > 42 &&
+    FLOW.every((step) => step.place.x > wallRect.minX && step.place.x < wallRect.maxX && step.place.z > wallRect.minZ && step.place.z < wallRect.maxZ)
+);
+{
+  let roomsInside = true;
+  let hitsProcess = false;
+  const equipment = buildSolids().filter((solid) => solid.kind === "tool" || solid.kind === "stocker");
+  for (const room of [...FACILITY_ROOMS, ...RETURN_AIR]) {
+    if (!rectCovers(wallRect, room) || !rectCovers(PLANT_FLOOR, room)) roomsInside = false;
+    for (const solid of equipment) {
+      if (rectsOverlap(room, solid)) hitsProcess = true;
+    }
+  }
+  check("return-air bands and perimeter rooms sit inside the cleanroom", roomsInside);
+  check("return-air bands and perimeter rooms do not overlap tools or the stocker", hitsProcess === false);
+}
+check(
+  "new rooms do not cover a rail node",
+  RAIL_NODES.every((node) => ![...FACILITY_ROOMS, ...RETURN_AIR].some((room) =>
+    node.x > room.minX && node.x < room.maxX && node.z > room.minZ && node.z < room.maxZ
+  ))
+);
+{
+  const shell = buildSolids();
+  const stock = stockerSolid();
+  const spawnClear = !blockedAt(WALK_SPAWN.x, WALK_SPAWN.z, shell) && WALK_SPAWN.x > stock.maxX;
+  const inRoom = [...FACILITY_ROOMS, ...RETURN_AIR].some((room) =>
+    WALK_SPAWN.x > room.minX && WALK_SPAWN.x < room.maxX && WALK_SPAWN.z > room.minZ && WALK_SPAWN.z < room.maxZ
+  );
+  check("the aisle spawn stays east of the stocker and outside the new rooms", spawnClear && inRoom === false);
+  let aisleClear = true;
+  for (let x = -44; x <= 40; x += 2) {
+    if (blockedAt(x, 0, shell) || blockedAt(x, 2.2, shell) || blockedAt(x, -2.2, shell)) aisleClear = false;
+  }
+  check("the main aisle stays walkable after the new envelope", aisleClear);
+  let closed = true;
+  for (const room of FACILITY_ROOMS) {
+    if (room.kind !== "ahu" && room.kind !== "duty") continue;
+    const cx = (room.minX + room.maxX) / 2;
+    const cz = (room.minZ + room.maxZ) / 2;
+    if (!blockedAt(cx, cz, shell)) closed = false;
+  }
+  for (const band of RETURN_AIR) {
+    const cx = (band.minX + band.maxX) / 2;
+    const cz = (band.minZ + band.maxZ) / 2;
+    if (!blockedAt(cx, cz, shell)) closed = false;
+  }
+  check("AHU rooms, the duty room, and the return-air bands are not walk-through", closed);
+}
+{
+  const gown = FACILITY_ROOMS.find((room) => room.id === "gowning");
+  const visitor = new WalkController();
+  const gz = (gown.minZ + gown.maxZ) / 2;
+  visitor.x = gown.maxX + PERSON_RADIUS + 0.15;
+  visitor.z = gz;
+  const approachOpen = !visitor.blocked(visitor.x, visitor.z);
+  const into = visitor.tryMove(-(PERSON_RADIUS + 1.2), 0);
+  const inside = into.moved === true && visitor.x < gown.maxX - ROOM_WALL_T && !visitor.blocked(visitor.x, visitor.z);
+  const out = visitor.tryMove(2.4, 0);
+  check(
+    "gowning can be entered from the aisle and left through the same door",
+    approachOpen && inside && out.moved === true && visitor.x > gown.maxX && !visitor.blocked(visitor.x, visitor.z)
+  );
+  const ahu = FACILITY_ROOMS.find((room) => room.id === "ahu-w");
+  visitor.x = ahu.maxX + PERSON_RADIUS + 0.2;
+  visitor.z = (ahu.minZ + ahu.maxZ) / 2;
+  const before = visitor.x;
+  const intoAhu = visitor.tryMove(-(PERSON_RADIUS + 0.9), 0);
+  check(
+    "the trainee cannot enter an AHU room",
+    !visitor.blocked(before, visitor.z) && intoAhu.blocked === true && visitor.x > ahu.maxX && visitor.x === before
+  );
+  const northBand = RETURN_AIR.find((band) => band.id === "return-n");
+  visitor.x = 0;
+  visitor.z = northBand.maxZ + PERSON_RADIUS + 0.2;
+  const beforeZ = visitor.z;
+  const intoAir = visitor.tryMove(0, -(PERSON_RADIUS + 0.9));
+  check(
+    "the trainee cannot walk into a return-air corridor",
+    !visitor.blocked(visitor.x, beforeZ) && intoAir.blocked === true && visitor.z > northBand.maxZ
+  );
+}
+{
+  const aspects = [1.6, 16 / 9];
+  const parks = [
+    { x: -36.75, z: -18, w: 16, d: 12 },
+    { x: -12, z: -18, w: 32, d: 12 },
+    { x: -34, z: 18, w: 18, d: 12 },
+    { x: -8, z: 18, w: 32, d: 12 },
+    { x: 24.5, z: 18, w: 32, d: 12 },
+  ];
+  const marks = [
+    ...parks.flatMap((bay) => [
+      [bay.x, 0.4, bay.z],
+      [bay.x - bay.w / 2, 4.6, bay.z - bay.d / 2],
+      [bay.x + bay.w / 2, 4.6, bay.z + bay.d / 2],
+    ]),
+    ...[...FACILITY_ROOMS, ...RETURN_AIR].flatMap((room) => [
+      [(room.minX + room.maxX) / 2, 0.4, (room.minZ + room.maxZ) / 2],
+      [room.minX, 4.2, room.minZ],
+      [room.maxX, 4.2, room.maxZ],
+    ]),
+  ];
+  const framed = aspects.every((aspect) => marks.every((point) => {
+    const p = projectOverview(point, aspect);
+    return p.z > 1 && Math.abs(p.ndcX) < 0.98 && Math.abs(p.ndcY) < 0.98;
+  }));
+  check("the default overview frames the five parks and the perimeter rooms", framed);
+}
+{
+  const lightBays = paletteOf("light").bays;
+  const ids = ["incoming", "cow", "dice", "wos", "pack"];
+  const chroma = (hex) => {
+    const r = (hex >> 16) & 255;
+    const g = (hex >> 8) & 255;
+    const b = hex & 255;
+    return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+  };
+  check(
+    "light process parks are five distinct color blocks",
+    new Set(ids.map((id) => lightBays[id])).size === 5 && ids.every((id) => chroma(lightBays[id]) > 0.28)
+  );
+}
 
 function memStore(initial = {}) {
   const data = { ...initial };

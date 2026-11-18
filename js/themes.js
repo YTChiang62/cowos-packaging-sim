@@ -36,8 +36,10 @@ const DARK = {
     seam: "rgba(211,146,90,0.28)",
     bayFill: "rgba(80,120,120,0.10)",
     aisle: "rgba(211,146,90,0.35)",
-    bayAlpha: 0.7,
-    bayLine: 4,
+    bayAlpha: 1,
+    bayLine: 10,
+    parkInk: "#f4faf8",
+    parkHalo: "rgba(6,14,18,0.9)",
     aisleWidth: 5,
     roughness: 0.82,
     metalness: 0.18,
@@ -52,6 +54,29 @@ const DARK = {
     dice: 0x1a1a30,
     wos: 0x2a2214,
     pack: 0x262018,
+  },
+  parkEdge: {
+    incoming: 0xe0a56a,
+    cow: 0x5ee0c8,
+    dice: 0x9aafff,
+    wos: 0xf0c080,
+    pack: 0xf0c2b0,
+  },
+  facility: {
+    returnFloor: 0x2c4550,
+    returnHatch: "rgba(190,220,220,0.16)",
+    ahuFloor: 0x24343a,
+    gownFloor: 0x1e3532,
+    dutyFloor: 0x3a3024,
+    line: 0x8eb8b4,
+    ahu: 0x314248,
+    ahuRoof: 0x24383e,
+    louver: 0xc4894a,
+    gownWall: 0x3d5c54,
+    dutyWall: 0x6a5438,
+    curb: 0x3d5c64,
+    plenum: 0x1a3036,
+    glass: 0x7fdad0,
   },
   label: LABEL,
 };
@@ -76,8 +101,10 @@ const NEUTRAL = {
     seam: "rgba(48,60,66,0.26)",
     bayFill: "rgba(70,92,98,0.16)",
     aisle: "rgba(36,48,54,0.55)",
-    bayAlpha: 0.9,
-    bayLine: 5,
+    bayAlpha: 1,
+    bayLine: 12,
+    parkInk: "#141c20",
+    parkHalo: "rgba(255,255,255,0.84)",
     aisleWidth: 6,
     roughness: 0.84,
     metalness: 0.1,
@@ -87,11 +114,34 @@ const NEUTRAL = {
   bayGlass: { color: 0x8ec8c4, opacity: 0.14 },
   bayFrame: 0xa78458,
   bays: {
-    incoming: 0xb7a48e,
-    cow: 0x9fb8b4,
-    dice: 0xa9adc2,
-    wos: 0xc2b29a,
-    pack: 0xb8afa2,
+    incoming: 0xc48a5c,
+    cow: 0x6a9e96,
+    dice: 0x848cb8,
+    wos: 0xc6aa68,
+    pack: 0xc48a86,
+  },
+  parkEdge: {
+    incoming: 0x5c3a22,
+    cow: 0x1c403c,
+    dice: 0x2a3058,
+    wos: 0x5a4418,
+    pack: 0x5a3030,
+  },
+  facility: {
+    returnFloor: 0x8fa3a8,
+    returnHatch: "rgba(28,40,46,0.22)",
+    ahuFloor: 0x7d8e8a,
+    gownFloor: 0xa3c0b4,
+    dutyFloor: 0xc4b496,
+    line: 0x243034,
+    ahu: 0x6e7e82,
+    ahuRoof: 0x556468,
+    louver: 0xb88848,
+    gownWall: 0x5c7870,
+    dutyWall: 0x8a7458,
+    curb: 0x5c6c72,
+    plenum: 0xc5d0d4,
+    glass: 0xc5ddd8,
   },
   label: LABEL,
 };
@@ -122,7 +172,9 @@ const LIGHT = {
     loopWidth: 14,
     boundary: "rgba(110,122,116,0.55)",
     bayAlpha: 1,
-    bayLine: 8,
+    bayLine: 16,
+    parkInk: "#14201c",
+    parkHalo: "rgba(255,255,255,0.94)",
     aisleWidth: 12,
     roughness: 0.9,
     metalness: 0.03,
@@ -132,11 +184,34 @@ const LIGHT = {
   bayGlass: { color: 0xd5ebe4, opacity: 0.12 },
   bayFrame: 0x8a6840,
   bays: {
-    incoming: 0xe7c8a2,
-    cow: 0xb7ddd2,
-    dice: 0xc5cef0,
-    wos: 0xeccfa6,
-    pack: 0xddd3c2,
+    incoming: 0xe08a3c,
+    cow: 0x2ea898,
+    dice: 0x6d84d6,
+    wos: 0xe2b03a,
+    pack: 0xd46562,
+  },
+  parkEdge: {
+    incoming: 0x6a320e,
+    cow: 0x0c4e46,
+    dice: 0x24306e,
+    wos: 0x6a4a08,
+    pack: 0x6a2828,
+  },
+  facility: {
+    returnFloor: 0x9bb4b8,
+    returnHatch: "rgba(28,58,66,0.28)",
+    ahuFloor: 0x8f9f98,
+    gownFloor: 0xc9e0d4,
+    dutyFloor: 0xe4d3b4,
+    line: 0x2f4a4e,
+    ahu: 0x8b9c96,
+    ahuRoof: 0x667872,
+    louver: 0xc4894a,
+    gownWall: 0x6f9484,
+    dutyWall: 0xb09774,
+    curb: 0x4e686e,
+    plenum: 0xd5e6ea,
+    glass: 0xd5ebe4,
   },
   label: LABEL,
 };
@@ -181,6 +256,31 @@ function paintColor(color, hex) {
   if (color && typeof color.setHex === "function") color.setHex(hex);
 }
 
+function cssColor(value) {
+  if (typeof value === "string") return value;
+  return "#" + (value >>> 0).toString(16).padStart(6, "0").slice(-6);
+}
+
+function worldRect(rect, toPx, minX, worldW, minZ, worldD) {
+  const x = toPx(rect.minX, minX, worldW);
+  const z = toPx(rect.minZ, minZ, worldD);
+  const w = toPx(rect.maxX, minX, worldW) - x;
+  const d = toPx(rect.maxZ, minZ, worldD) - z;
+  return { x, z, w, d };
+}
+
+function fillZone(g, rect, fill, line, toPx, minX, worldW, minZ, worldD) {
+  const box = worldRect(rect, toPx, minX, worldW, minZ, worldD);
+  g.fillStyle = cssColor(fill);
+  g.fillRect(box.x, box.z, box.w, box.d);
+  if (line != null) {
+    g.strokeStyle = cssColor(line);
+    g.lineWidth = 8;
+    g.strokeRect(box.x + 4, box.z + 4, Math.max(1, box.w - 8), Math.max(1, box.d - 8));
+  }
+  return box;
+}
+
 /**
  * Paint the floor canvas. Bay rectangles and the aisle spine stay with the plant;
  * colors come from the palette. `layout.floor` is the world XZ of the slab
@@ -216,15 +316,35 @@ export function paintFloor(g, size, palette, bays, accents, layout) {
     g.bezierCurveTo(400, y + 20, 900, y - 18, s - 40, y + 8);
     g.stroke();
   }
-  if (floor.boundary && layout?.walls) {
-    const { north, south, west, east } = layout.walls;
-    const x = toPx(west, minX, worldW);
-    const z = toPx(north, minZ, worldD);
-    const w = toPx(east, minX, worldW) - x;
-    const d = toPx(south, minZ, worldD) - z;
-    g.strokeStyle = floor.boundary;
-    g.lineWidth = 12;
-    g.strokeRect(x, z, w, d);
+  const facility = palette.facility;
+  if (facility && layout?.returns) {
+    for (const band of layout.returns) {
+      const box = fillZone(g, band, facility.returnFloor, facility.line, toPx, minX, worldW, minZ, worldD);
+      g.save();
+      g.beginPath();
+      g.rect(box.x, box.z, box.w, box.d);
+      g.clip();
+      g.strokeStyle = facility.returnHatch;
+      g.lineWidth = 2;
+      const step = 22;
+      for (let i = -box.d; i < box.w + box.d; i += step) {
+        g.beginPath();
+        g.moveTo(box.x + i, box.z);
+        g.lineTo(box.x + i + box.d * 0.6, box.z + box.d);
+        g.stroke();
+      }
+      g.restore();
+    }
+  }
+  if (facility && layout?.rooms) {
+    for (const room of layout.rooms) {
+      const fill = room.kind === "gowning"
+        ? facility.gownFloor
+        : room.kind === "duty"
+          ? facility.dutyFloor
+          : facility.ahuFloor;
+      fillZone(g, room, fill, facility.line, toPx, minX, worldW, minZ, worldD);
+    }
   }
   for (const bay of bays) {
     const x = toPx(bay.x - bay.w / 2, minX, worldW);
@@ -235,13 +355,26 @@ export function paintFloor(g, size, palette, bays, accents, layout) {
     const col = typeof accent === "number"
       ? "#" + accent.toString(16).padStart(6, "0")
       : accent;
-    g.fillStyle = floor.bayFill;
+    const fill = palette.bays?.[bay.id];
+    g.fillStyle = fill != null ? cssColor(fill) : floor.bayFill;
+    g.globalAlpha = floor.parkAlpha ?? 1;
     g.fillRect(x, z, w, d);
-    g.strokeStyle = col;
-    g.globalAlpha = floor.bayAlpha;
+    g.globalAlpha = floor.bayAlpha ?? 1;
+    g.strokeStyle = cssColor(palette.parkEdge?.[bay.id] ?? col);
     g.lineWidth = floor.bayLine;
-    g.strokeRect(x + 6, z + 6, w - 12, d - 12);
+    const inset = g.lineWidth;
+    g.strokeRect(x + inset * 0.5, z + inset * 0.5, Math.max(1, w - inset), Math.max(1, d - inset));
     g.globalAlpha = 1;
+  }
+  if (floor.boundary && layout?.walls) {
+    const { north, south, west, east } = layout.walls;
+    const x = toPx(west, minX, worldW);
+    const z = toPx(north, minZ, worldD);
+    const w = toPx(east, minX, worldW) - x;
+    const d = toPx(south, minZ, worldD) - z;
+    g.strokeStyle = floor.boundary;
+    g.lineWidth = 12;
+    g.strokeRect(x, z, w, d);
   }
   const aisleX0 = toPx(-46, minX, worldW);
   const aisleX1 = toPx(42, minX, worldW);
@@ -351,6 +484,12 @@ export function applyTheme(plant, id, storage) {
     plant.bayGlass.opacity = palette.bayGlass.opacity;
   }
   paintColor(plant.bayFrame?.color, palette.bayFrame);
+  if (plant.tints && palette.facility) {
+    for (const entry of plant.tints) {
+      const hex = palette.facility[entry.key];
+      if (typeof hex === "number") paintColor(entry.mat?.color, hex);
+    }
+  }
   if (plant.bayPlinths) {
     for (const entry of plant.bayPlinths) {
       const hex = palette.bays[entry.id];
@@ -370,5 +509,6 @@ export function applyTheme(plant, id, storage) {
   }
 
   markDocument(plant, themeId);
+  plant.refreshPlaceTags?.();
   return palette;
 }
