@@ -98,40 +98,45 @@ const NEUTRAL = {
 
 const LIGHT = {
   id: "light",
-  swatch: "#d7e2e8",
-  clear: 0xd7e2e8,
-  fog: 0xd7e2e8,
-  fogNear: 168,
-  fogFar: 340,
-  exposure: 1.0,
-  hemi: { sky: 0xf7fbfc, ground: 0xc5ced3, intensity: 1.38 },
-  sun: { color: 0xfff7ee, intensity: 0.98 },
-  fill: { color: 0xc5dde6, intensity: 0.74 },
-  rim: { color: 0xeaf3f6, intensity: 0.4 },
-  stocker: { color: 0xf6d7b0, intensity: 8, distance: 18 },
-  work: { color: 0xfff6ea, intensity: 1.05, distance: 7 },
+  swatch: "#f7f8f6",
+  clear: 0xf7f8f6,
+  fog: 0xf6f7f5,
+  fogNear: 260,
+  fogFar: 520,
+  exposure: 1.34,
+  hemi: { sky: 0xfffdf8, ground: 0xe8e6de, intensity: 1.7 },
+  sun: { color: 0xfff6ea, intensity: 1.46 },
+  fill: { color: 0xf4f6f5, intensity: 0.42 },
+  rim: { color: 0xffffff, intensity: 0.26 },
+  stocker: { color: 0xffe6c4, intensity: 10, distance: 22 },
+  work: { color: 0xfff6ea, intensity: 0.7, distance: 8 },
   floor: {
-    base: "#e7eef2",
-    speckle: "rgba(62,84,94,0.26)",
-    seam: "rgba(70,92,102,0.2)",
-    bayFill: "rgba(110,140,150,0.18)",
-    aisle: "rgba(42,62,72,0.62)",
-    bayAlpha: 0.95,
-    bayLine: 6,
-    aisleWidth: 7,
-    roughness: 0.88,
-    metalness: 0.05,
+    base: "#f7f8f6",
+    speckle: "rgba(90,98,94,0.1)",
+    seam: "rgba(120,128,122,0.12)",
+    bayFill: "rgba(70,96,90,0.05)",
+    aisle: "rgba(36,52,58,0.72)",
+    aisleBand: "rgba(64,84,88,0.075)",
+    aisleEdge: "rgba(42,62,68,0.45)",
+    loop: "rgba(150,116,68,0.55)",
+    loopWidth: 14,
+    boundary: "rgba(110,122,116,0.55)",
+    bayAlpha: 1,
+    bayLine: 8,
+    aisleWidth: 12,
+    roughness: 0.9,
+    metalness: 0.03,
   },
-  skirt: 0xd0d8dc,
-  wall: { color: 0x8eabba, opacity: 0.28 },
-  bayGlass: { color: 0x9fd0cc, opacity: 0.2 },
-  bayFrame: 0x8d6a42,
+  skirt: 0xe7eae6,
+  wall: { color: 0xd7e0db, opacity: 0.16 },
+  bayGlass: { color: 0xd5ebe4, opacity: 0.12 },
+  bayFrame: 0x8a6840,
   bays: {
-    incoming: 0xe6d6c4,
-    cow: 0xd4ebe6,
-    dice: 0xd9def0,
-    wos: 0xf0e0cc,
-    pack: 0xe7e0d4,
+    incoming: 0xe7c8a2,
+    cow: 0xb7ddd2,
+    dice: 0xc5cef0,
+    wos: 0xeccfa6,
+    pack: 0xddd3c2,
   },
   label: LABEL,
 };
@@ -177,12 +182,21 @@ function paintColor(color, hex) {
 }
 
 /**
- * Paint the floor canvas. Layout (bay rectangles, aisle) stays with the plant;
- * only the colors come from the palette.
+ * Paint the floor canvas. Bay rectangles and the aisle spine stay with the plant;
+ * colors come from the palette. `layout.floor` is the world XZ of the slab
+ * (canvas top is north / min Z, matching the rotated floor plane).
  */
-export function paintFloor(g, size, palette, bays, accents) {
+export function paintFloor(g, size, palette, bays, accents, layout) {
   const floor = palette.floor;
   const s = size;
+  const bounds = layout?.floor || { minX: -50, maxX: 50, minZ: -40, maxZ: 40 };
+  const minX = bounds.minX;
+  const maxX = bounds.maxX;
+  const minZ = bounds.minZ;
+  const maxZ = bounds.maxZ;
+  const worldW = maxX - minX;
+  const worldD = maxZ - minZ;
+  const toPx = (m, origin, span) => ((m - origin) / span) * s;
   g.fillStyle = floor.base;
   g.fillRect(0, 0, s, s);
   g.fillStyle = floor.speckle;
@@ -199,17 +213,22 @@ export function paintFloor(g, size, palette, bays, accents) {
     const y = 80 + i * 68;
     g.beginPath();
     g.moveTo(40, y);
-    g.bezierCurveTo(400, y + 20, 900, y - 18, 2000, y + 8);
+    g.bezierCurveTo(400, y + 20, 900, y - 18, s - 40, y + 8);
     g.stroke();
   }
-  const toPx = (m, origin, span, sizePx) => ((m - origin) / span) * sizePx;
-  const worldW = 100;
-  const worldD = 80;
-  const ox = -50;
-  const oz = -40;
+  if (floor.boundary && layout?.walls) {
+    const { north, south, west, east } = layout.walls;
+    const x = toPx(west, minX, worldW);
+    const z = toPx(north, minZ, worldD);
+    const w = toPx(east, minX, worldW) - x;
+    const d = toPx(south, minZ, worldD) - z;
+    g.strokeStyle = floor.boundary;
+    g.lineWidth = 12;
+    g.strokeRect(x, z, w, d);
+  }
   for (const bay of bays) {
-    const x = toPx(bay.x - bay.w / 2, ox, worldW, s);
-    const z = toPx(bay.z - bay.d / 2, oz, worldD, s);
+    const x = toPx(bay.x - bay.w / 2, minX, worldW);
+    const z = toPx(bay.z - bay.d / 2, minZ, worldD);
     const w = (bay.w / worldW) * s;
     const d = (bay.d / worldD) * s;
     const accent = accents[bay.id];
@@ -224,13 +243,46 @@ export function paintFloor(g, size, palette, bays, accents) {
     g.strokeRect(x + 6, z + 6, w - 12, d - 12);
     g.globalAlpha = 1;
   }
+  const aisleX0 = toPx(-46, minX, worldW);
+  const aisleX1 = toPx(42, minX, worldW);
+  const aisleZ = toPx(0, minZ, worldD);
+  if (floor.aisleBand) {
+    const z0 = toPx(-3.2, minZ, worldD);
+    const z1 = toPx(3.2, minZ, worldD);
+    g.fillStyle = floor.aisleBand;
+    g.fillRect(aisleX0, Math.min(z0, z1), aisleX1 - aisleX0, Math.abs(z1 - z0));
+    if (floor.aisleEdge) {
+      g.strokeStyle = floor.aisleEdge;
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(aisleX0, z0);
+      g.lineTo(aisleX1, z0);
+      g.moveTo(aisleX0, z1);
+      g.lineTo(aisleX1, z1);
+      g.stroke();
+    }
+  }
+  if (floor.loop && layout?.loop) {
+    g.strokeStyle = floor.loop;
+    g.lineWidth = floor.loopWidth || 8;
+    g.setLineDash([18, 14]);
+    g.beginPath();
+    layout.loop.forEach((node, i) => {
+      const x = toPx(node.x, minX, worldW);
+      const z = toPx(node.z, minZ, worldD);
+      if (i === 0) g.moveTo(x, z);
+      else g.lineTo(x, z);
+    });
+    g.closePath();
+    g.stroke();
+    g.setLineDash([]);
+  }
   g.strokeStyle = floor.aisle;
   g.setLineDash([16, 14]);
   g.lineWidth = floor.aisleWidth;
-  const aisleZ = toPx(0, oz, worldD, s);
   g.beginPath();
-  g.moveTo(toPx(-46, ox, worldW, s), aisleZ);
-  g.lineTo(toPx(42, ox, worldW, s), aisleZ);
+  g.moveTo(aisleX0, aisleZ);
+  g.lineTo(aisleX1, aisleZ);
   g.stroke();
   g.setLineDash([]);
 }

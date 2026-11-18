@@ -1,5 +1,9 @@
 import * as THREE from "three";
 import { box, cyl, mat } from "./mat.js";
+import { TOOL_VISUAL_SCALE, toolScaleShiftZ } from "./walk.js";
+
+/** Traveling carriers grow a little with the tools so a FOUP still fills the port. */
+const CARRIER_VISUAL_SCALE = 1.12;
 
 /** Mid paint and a lighter recess so cabinets read on pale and dark floors. */
 const BODY = mat(0x62727a, { roughness: 0.44, metalness: 0.32 });
@@ -643,6 +647,9 @@ export function buildTool(station) {
   point.position.set(0, 1.8, 0.2);
   group.add(point);
 
+  group.scale.setScalar(TOOL_VISUAL_SCALE);
+  group.position.z += toolScaleShiftZ(station.place.face);
+
   return { group, chuck, load, hit, parts, lights, point, kind };
 }
 
@@ -771,6 +778,7 @@ export function carrierShell(type) {
       }
     }
   }
+  g.scale.setScalar(CARRIER_VISUAL_SCALE);
   return g;
 }
 

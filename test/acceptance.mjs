@@ -7,8 +7,11 @@ import {
   FLOW,
   FLOW_ID,
   HOLDS,
+  LOAD_LOCAL_Z,
   MORPHS,
+  RAIL_NODES,
   RECIPES,
+  STOCKER,
   assertContract,
   morphIsBlocked,
   morphRank,
@@ -17,8 +20,11 @@ import {
 } from "../js/route.js";
 import { frame, motion, posesEqual } from "../js/morph.js";
 import {
+  OVERVIEW_CAMERA,
   PERSON_RADIUS,
+  PLANT_FLOOR,
   TOOL_HALF_X,
+  TOOL_VISUAL_SCALE,
   TOOL_Z_MAX,
   TOOL_Z_MIN,
   WALK_SPAWN,
@@ -26,6 +32,7 @@ import {
   blockedAt,
   buildSolids,
   nextCameraMode,
+  preservedLoadPort,
   stockerSolid,
   toolSolid,
   wallSolids,
@@ -749,17 +756,138 @@ check("switching theme does not change recipe ids", JSON.stringify(Object.keys(R
 const footprint = buildSolids().filter((solid) => solid.kind === "tool");
 check("equipment footprints are still the 21 tool solids", footprint.length === 21);
 check(
-  "tool solids still use the shared footprint",
+  "tool solids use the enlarged shared footprint",
+  TOOL_VISUAL_SCALE >= 1.4 &&
+  TOOL_VISUAL_SCALE <= 1.65 &&
+  TOOL_HALF_X * TOOL_VISUAL_SCALE * 2 < 4.7 &&
   FLOW.every((step) => {
     const solid = toolSolid(step.place, step.tool);
+    const half = TOOL_HALF_X * TOOL_VISUAL_SCALE;
+    const depth = (TOOL_Z_MAX - TOOL_Z_MIN) * TOOL_VISUAL_SCALE;
     return (
-      Math.abs(solid.minX - (step.place.x - TOOL_HALF_X)) < 1e-9 &&
-      Math.abs(solid.maxX - (step.place.x + TOOL_HALF_X)) < 1e-9 &&
-      Math.abs((solid.maxZ - solid.minZ) - (TOOL_Z_MAX - TOOL_Z_MIN)) < 1e-9 &&
+      Math.abs(solid.minX - (step.place.x - half)) < 1e-9 &&
+      Math.abs(solid.maxX - (step.place.x + half)) < 1e-9 &&
+      Math.abs((solid.maxZ - solid.minZ) - depth) < 1e-9 &&
       solid.id === step.tool
     );
   })
 );
+check(
+  "scaled tools keep their load ports on the rail nodes",
+  FLOW.every((step) => {
+    const port = preservedLoadPort(step.place);
+    const rail = RAIL_NODES.find((node) => node.id === step.tool);
+    const unscaledZ = step.place.z + (step.place.face >= 0 ? 1 : -1) * LOAD_LOCAL_Z;
+    return rail && Math.abs(port.x - rail.x) < 1e-6 && Math.abs(port.z - rail.z) < 1e-6 && Math.abs(port.z - unscaledZ) < 1e-6;
+  })
+);
+{
+  let overlap = false;
+  for (let i = 0; i < footprint.length; i++) {
+    for (let j = i + 1; j < footprint.length; j++) {
+      const a = footprint[i];
+      const b = footprint[j];
+      if (a.minX < b.maxX && a.maxX > b.minX && a.minZ < b.maxZ && a.maxZ > b.minZ) overlap = true;
+    }
+  }
+  check("enlarged tool solids do not overlap each other", overlap === false);
+}
+{
+  const solids = buildSolids();
+  let aisleClear = true;
+  for (let x = -44; x <= 40; x += 2) {
+    if (blockedAt(x, 0, solids) || blockedAt(x, 2.2, solids) || blockedAt(x, -2.2, solids)) aisleClear = false;
+  }
+  check("the main aisle stays walkable after the tool scale", aisleClear && !blockedAt(WALK_SPAWN.x, WALK_SPAWN.z, solids));
+}
+check(
+  "the cleanroom slab is shorter than the old 80 m apron and still covers the stocker",
+  (PLANT_FLOOR.maxZ - PLANT_FLOOR.minZ) < 70 &&
+  PLANT_FLOOR.minX < STOCKER.place.x - 3 &&
+  PLANT_FLOOR.maxX > 42 &&
+  PLANT_FLOOR.minZ < -24 &&
+  PLANT_FLOOR.maxZ > 24
+);
+
+function projectOverview(point, aspect) {
+  const pos = OVERVIEW_CAMERA.position;
+  const target = OVERVIEW_CAMERA.target;
+  const fx = target[0] - pos[0];
+  const fy = target[1] - pos[1];
+  const fz = target[2] - pos[2];
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  const forward = [fx / fl, fy / fl, fz / fl];
+  const up = [0, 1, 0];
+  const rx = forward[1] * up[2] - forward[2] * up[1];
+  const ry = forward[2] * up[0] - forward[0] * up[2];
+  const rz = forward[0] * up[1] - forward[1] * up[0];
+  const rl = Math.hypot(rx, ry, rz) || 1;
+  const right = [rx / rl, ry / rl, rz / rl];
+  const ux = right[1] * forward[2] - right[2] * forward[1];
+  const uy = right[2] * forward[0] - right[0] * forward[2];
+  const uz = right[0] * forward[1] - right[1] * forward[0];
+  const vx = point[0] - pos[0];
+  const vy = point[1] - pos[1];
+  const vz = point[2] - pos[2];
+  const z = vx * forward[0] + vy * forward[1] + vz * forward[2];
+  const tan = Math.tan((OVERVIEW_CAMERA.fov * Math.PI) / 360);
+  const ndcX = ((vx * right[0] + vy * right[1] + vz * right[2]) / z) / (tan * aspect);
+  const ndcY = ((vx * ux + vy * uy + vz * uz) / z) / tan;
+  return { z, ndcX, ndcY };
+}
+{
+  const aspects = [1.6, 16 / 9];
+  const marks = [
+    ...FLOW.map((step) => [step.place.x, 2, step.place.z]),
+    [STOCKER.place.x, 3, STOCKER.place.z],
+    [PLANT_FLOOR.minX, 0, PLANT_FLOOR.minZ],
+    [PLANT_FLOOR.maxX, 0, PLANT_FLOOR.minZ],
+    [PLANT_FLOOR.minX, 0, PLANT_FLOOR.maxZ],
+    [PLANT_FLOOR.maxX, 0, PLANT_FLOOR.maxZ],
+  ];
+  const framed = aspects.every((aspect) => marks.every((point) => {
+    const p = projectOverview(point, aspect);
+    return p.z > 1 && Math.abs(p.ndcX) < 0.98 && Math.abs(p.ndcY) < 0.98;
+  }));
+  check("the default overview frames the stocker, every tool, and the cleanroom slab", framed);
+}
+
+function channel(hex, shift) {
+  return (hex >> shift) & 255;
+}
+function luminance(hex) {
+  const r = channel(hex, 16) / 255;
+  const g = channel(hex, 8) / 255;
+  const b = channel(hex, 0) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+const OLD_LIGHT_CLEAR = 0xd7e2e8;
+const OLD_LIGHT_FLOOR = 0xe7eef2;
+const lightPalette = paletteOf("light");
+const lightFloor = parseInt(lightPalette.floor.base.slice(1), 16);
+check(
+  "the default light clear is near white and brighter than the old gray",
+  lightPalette.clear !== OLD_LIGHT_CLEAR &&
+  luminance(lightPalette.clear) > luminance(OLD_LIGHT_CLEAR) + 0.06 &&
+  channel(lightPalette.clear, 16) >= 0xf0 &&
+  channel(lightPalette.clear, 8) >= 0xf0 &&
+  channel(lightPalette.clear, 0) >= 0xf0 &&
+  Math.abs(channel(lightPalette.clear, 0) - channel(lightPalette.clear, 16)) <= 12
+);
+check(
+  "the default light floor is whiter than the old cool gray slab",
+  lightPalette.floor.base !== "#e7eef2" &&
+  luminance(lightFloor) > luminance(OLD_LIGHT_FLOOR) &&
+  channel(lightFloor, 16) >= 0xf2 &&
+  channel(lightFloor, 0) <= channel(lightFloor, 8) + 2
+);
+check(
+  "the default light fog is lighter and starts farther out",
+  lightPalette.fogNear > 200 &&
+  lightPalette.fogFar > lightPalette.fogNear + 150 &&
+  luminance(lightPalette.fog) > luminance(OLD_LIGHT_CLEAR) + 0.05
+);
+check("the default light exposure is brighter than the old 1.0", lightPalette.exposure > 1.05 && lightPalette.exposure < 1.4);
 const themeWalk = new WalkController();
 const themeEntered = themeWalk.enter();
 check(

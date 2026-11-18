@@ -67,14 +67,14 @@ function buildStocker() {
   const group = new THREE.Group();
   group.position.set(STOCKER.place.x, 0, STOCKER.place.z);
   group.name = "stocker";
-  const shell = mat(0x1a2428, { roughness: 0.4, metalness: 0.55 });
-  const dark = mat(0x10161a, { roughness: 0.5, metalness: 0.4 });
+  const shell = mat(0x2a3840, { roughness: 0.42, metalness: 0.52 });
+  const dark = mat(0x1a242c, { roughness: 0.5, metalness: 0.4 });
   box(group, 7.2, 0.28, 4.4, dark, 0.2, 0.14, 0);
   box(group, 0.16, 4.5, 4.2, shell, -3.45, 2.4, 0);
   box(group, 0.16, 4.5, 4.2, shell, 3.55, 2.4, 0);
   box(group, 7.1, 0.16, 4.2, shell, 0.05, 4.55, 0);
-  box(group, 7.0, 4.3, 0.12, mat(0x142026, { roughness: 0.35, metalness: 0.4 }), 0.05, 2.35, -2.05);
-  const glass = mat(0x7fdad0, { transparent: true, opacity: 0.1, roughness: 0.08, metalness: 0.2 });
+  box(group, 7.0, 4.3, 0.12, mat(0x1c2c32, { roughness: 0.35, metalness: 0.4 }), 0.05, 2.35, -2.05);
+  const glass = mat(0xc5eee8, { transparent: true, opacity: 0.16, roughness: 0.08, metalness: 0.15 });
   const glassMesh = box(group, 6.6, 3.5, 0.06, glass, 0.1, 2.4, 2.05);
   glassMesh.name = "stocker-glass";
   const interior = new THREE.PointLight(0xfff1d6, 5, 7);
@@ -179,6 +179,7 @@ function buildVehicle(id, tint) {
   tag.position.set(0, 0.45, 0);
   tag.scale.set(1.5, 0.38, 1);
   group.add(tag);
+  group.scale.setScalar(1.16);
   return { group, cable, grip };
 }
 
