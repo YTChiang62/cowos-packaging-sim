@@ -7,8 +7,9 @@ import { Workpiece } from "./product.js";
 import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
 import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
-import { OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, WalkController } from "./walk.js";
+import { FACILITY_ROOMS, OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, RETURN_AIR, WalkController } from "./walk.js";
 import { applyTheme, paintFloor, readThemeId } from "./themes.js";
+import { buildFacilityShell, makeBillboard, makeFlatTag } from "./shell.js";
 
 const BAYS = [
   { id: "incoming", x: -36.75, z: -18, w: 16, d: 12 },
@@ -23,7 +24,7 @@ const BAY_ACCENT = {
   cow: 0x3ee0c0,
   dice: 0x8aa0ff,
   wos: 0xe0a15a,
-  pack: 0xd7c4a0,
+  pack: 0xe7a098,
 };
 
 const LABEL_FONT = "700 42px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC','Microsoft JhengHei',sans-serif";
@@ -45,6 +46,8 @@ function makeFloorTexture(palette) {
     floor: PLANT_FLOOR,
     walls: PLANT_WALLS,
     loop: RAIL_NODES,
+    rooms: FACILITY_ROOMS,
+    returns: RETURN_AIR,
   });
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 8;
@@ -105,33 +108,6 @@ function labelSprite(title, sub, accent) {
   return sp;
 }
 
-function bayLabel(text, accent) {
-  const cv = document.createElement("canvas");
-  cv.width = 768;
-  cv.height = 128;
-  const g = cv.getContext("2d");
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.85, depthWrite: false }));
-  sp.scale.set(10.4, 1.72, 1);
-  sp.position.y = 0.12;
-  sp.userData.redraw = (t) => {
-    g.clearRect(0, 0, 768, 128);
-    g.fillStyle = "rgba(6,14,18,0.78)";
-    roundRect(g, 90, 18, 588, 92, 18);
-    g.fill();
-    g.fillStyle = accent;
-    g.globalAlpha = 0.95;
-    g.font = "700 64px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC',sans-serif";
-    g.textAlign = "center";
-    g.fillText(t, 384, 82);
-    g.globalAlpha = 1;
-    tex.needsUpdate = true;
-  };
-  sp.userData.redraw(text);
-  return sp;
-}
-
 function stdMat(color, opts = {}) {
   return new THREE.MeshStandardMaterial({
     color,
@@ -182,11 +158,14 @@ export class Plant {
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI * 0.42;
     this.controls.minDistance = 3.2;
-    this.controls.maxDistance = 160;
+    this.controls.maxDistance = 210;
     this.controls.target.set(overview.target[0], overview.target[1], overview.target[2]);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.walking = false;
+    this.tags = [];
+    this.billboards = [];
+    this.tints = [];
     this.walker = new WalkController();
     this.pointerLocked = false;
     this._walkPhase = 0;
@@ -199,6 +178,10 @@ export class Plant {
     this._buildBays();
     this._buildTools();
     this._buildDemoCarrier();
+    const shell = buildFacilityShell(this.scene, (key) => this.tFn(key));
+    this.tints = shell.tints;
+    this.tags.push(...shell.tags);
+    this.billboards.push(...shell.billboards);
     this.view = new FacilityView(this.scene);
     this.view.sync({
       carriers: seedCarriers({ id: "PREVIEW", wafer: "" }),
@@ -377,9 +360,17 @@ export class Plant {
       const accent = "#" + BAY_ACCENT[rec.bay].toString(16).padStart(6, "0");
       rec.label.userData.redraw(id, this.tFn("step_" + rec.station.id), accent);
     }
-    for (const bay of BAYS) {
-      const sp = this.scene.getObjectByName(`bay-label-${bay.id}`);
-      if (sp?.userData.redraw) sp.userData.redraw(this.tFn(`bay_${bay.id}`));
+    this.refreshPlaceTags();
+  }
+
+  refreshPlaceTags() {
+    const ink = this.palette?.floor?.parkInk || "#14201c";
+    const halo = this.palette?.floor?.parkHalo || "rgba(255,255,255,0.94)";
+    for (const tag of this.tags || []) {
+      tag.userData.redraw?.(this.tFn(tag.userData.labelKey), ink, halo);
+    }
+    for (const sign of this.billboards || []) {
+      sign.userData.redraw?.(this.tFn(sign.userData.labelKey));
     }
   }
 
@@ -528,10 +519,10 @@ export class Plant {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 2;
     sun.shadow.camera.far = 160;
-    sun.shadow.camera.left = -80;
-    sun.shadow.camera.right = 70;
-    sun.shadow.camera.top = 48;
-    sun.shadow.camera.bottom = -48;
+    sun.shadow.camera.left = -110;
+    sun.shadow.camera.right = 100;
+    sun.shadow.camera.top = 72;
+    sun.shadow.camera.bottom = -72;
     sun.shadow.bias = -0.0007;
     this.scene.add(sun);
     const fill = new THREE.DirectionalLight(0xffffff, 0.3);
@@ -628,11 +619,25 @@ export class Plant {
       plinth.position.y = 0.03;
       plinth.receiveShadow = true;
       group.add(plinth);
-      const accent = "#" + BAY_ACCENT[bay.id].toString(16).padStart(6, "0");
-      const lab = bayLabel(bay.id.toUpperCase(), accent);
+      const twoLine = bay.id === "incoming";
+      const span = twoLine ? Math.min(bay.w * 0.72, 7.6) : Math.min(bay.w * 0.62, 12.8);
+      const depth = twoLine ? span / 2.35 : span / 4;
+      const half = depth / 2;
+      const edge = bay.z < 0 ? -20.55 : 20.55;
+      const localZ = bay.z < 0 ? edge - bay.z - half : edge - bay.z + half;
+      const tag = makeFlatTag(bay.id);
+      tag.userData.labelKey = `bay_${bay.id}`;
+      tag.position.set(0, 0.14, localZ);
+      tag.scale.set(span, depth, 1);
+      group.add(tag);
+      this.tags.push(tag);
+      const lab = makeBillboard(bay.id);
       lab.name = `bay-label-${bay.id}`;
-      lab.position.set(0, 0.14, bay.z < 0 ? hd - 1.2 : -hd + 1.2);
+      lab.userData.labelKey = `bay_${bay.id}`;
+      lab.scale.set(8.6, 1.8, 1);
+      lab.position.set(0, 3.15, bay.z < 0 ? hd - 1.35 : -hd + 1.35);
       group.add(lab);
+      this.billboards.push(lab);
       this.scene.add(group);
     }
   }
@@ -1040,6 +1045,12 @@ export class Plant {
       const labelOpacity = camY > 22 ? Math.max(0, 1 - (camY - 22) / 10) : 1;
       rec.label.material.opacity = labelOpacity;
       rec.label.visible = labelOpacity > 0.08;
+    }
+    const camY = this.camera.position.y;
+    const signOpacity = camY > 28 ? Math.max(0, 1 - (camY - 28) / 16) : 1;
+    for (const sign of this.billboards || []) {
+      sign.material.opacity = signOpacity;
+      sign.visible = signOpacity > 0.05;
     }
 
     this.renderer.render(this.scene, this.camera);

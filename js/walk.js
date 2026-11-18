@@ -19,21 +19,49 @@ export const EYE_HEIGHT = 1.62;
  */
 export const TOOL_VISUAL_SCALE = 1.55;
 
-/** Outer cleanroom slab. Tighter than the old 100×80 apron, and wide enough for the stocker. */
-export const PLANT_FLOOR = { minX: -56.2, maxX: 45.9, minZ: -28.7, maxZ: 28.7 };
+/**
+ * Outer cleanroom slab. Grown just enough for the return-air bands and the
+ * perimeter rooms. Still shorter than the old 80 m apron.
+ */
+export const PLANT_FLOOR = { minX: -64.6, maxX: 52.8, minZ: -34.8, maxZ: 34.8 };
 
 /** Glass boundary just inside the slab. Collision slabs are centered on these planes. */
-export const PLANT_WALLS = { north: -27.2, south: 27.2, west: -54.6, east: 44.5 };
+export const PLANT_WALLS = { north: -33.4, south: 33.4, west: -63.0, east: 51.2 };
 
 /**
- * Default 總覽. Desktop aspects (about 1.6 and 16:9) keep the stocker,
- * five bays, aisle, and east rail inside the frame.
+ * Default 總覽. A high oblique — still 3D, not a flat plan — frames the five
+ * color parks, both return-air bands, the perimeter rooms, the stocker, and
+ * every tool on desktop aspects (about 1.6 and 16:9).
  */
 export const OVERVIEW_CAMERA = {
   fov: 42,
-  position: [10, 74, 82],
-  target: [-6, 0.4, 1],
+  position: [-3, 110, 53],
+  target: [-7, 0.4, -1],
 };
+
+/** Thickness of perimeter-room walls. Meshes and walk solids share this. */
+export const ROOM_WALL_T = 0.36;
+
+/**
+ * Support rooms around the process floor. Not a sixth bay and not FEOL.
+ * AHU and the duty room are solid footprints. Gowning is walls plus an
+ * east door onto the aisle beside the stocker.
+ */
+export const FACILITY_ROOMS = [
+  { id: "ahu-nw", kind: "ahu", labelKey: "room_ahu", minX: -61.8, maxX: -53.2, minZ: -32.2, maxZ: -24.0, door: "east" },
+  { id: "ahu-ne", kind: "ahu", labelKey: "room_ahu", minX: 43.2, maxX: 50.0, minZ: -32.2, maxZ: -24.0, door: "west" },
+  { id: "ahu-sw", kind: "ahu", labelKey: "room_ahu", minX: -61.8, maxX: -53.2, minZ: 24.0, maxZ: 32.2, door: "east" },
+  { id: "ahu-se", kind: "ahu", labelKey: "room_ahu", minX: 43.2, maxX: 50.0, minZ: 24.0, maxZ: 32.2, door: "west" },
+  { id: "ahu-w", kind: "ahu", labelKey: "room_ahu", minX: -61.8, maxX: -54.4, minZ: -22.6, maxZ: -6.6, door: "east" },
+  { id: "gowning", kind: "gowning", labelKey: "room_gowning", minX: -61.6, maxX: -47.4, minZ: 3.6, maxZ: 11.15, door: "east", doorWidth: 2.5 },
+  { id: "duty", kind: "duty", labelKey: "room_duty", minX: -61.6, maxX: -54.6, minZ: 13.8, maxZ: 21.0, door: "east" },
+];
+
+/** North and south 回風夾道. Facility bands outside the process parks. Not walkable. */
+export const RETURN_AIR = [
+  { id: "return-n", kind: "return", labelKey: "room_return", minX: -53.4, maxX: 43.4, minZ: -32.0, maxZ: -24.2 },
+  { id: "return-s", kind: "return", labelKey: "room_return", minX: -53.4, maxX: 43.4, minZ: 24.2, maxZ: 32.0 },
+];
 
 /** Z added to a tool group's position after a uniform visual scale. Face +1 looks toward +Z. */
 export function toolScaleShiftZ(face, scale = TOOL_VISUAL_SCALE) {
@@ -112,11 +140,49 @@ export function wallSolids() {
   ];
 }
 
+function gowningSolids(room) {
+  const t = ROOM_WALL_T;
+  const { minX, maxX, minZ, maxZ } = room;
+  const width = room.doorWidth || 2.5;
+  const mid = (minZ + maxZ) / 2;
+  const z0 = mid - width / 2;
+  const z1 = mid + width / 2;
+  return [
+    { id: `${room.id}-n`, kind: "room-wall", minX, maxX, minZ, maxZ: minZ + t },
+    { id: `${room.id}-s`, kind: "room-wall", minX, maxX, minZ: maxZ - t, maxZ },
+    { id: `${room.id}-w`, kind: "room-wall", minX, maxX: minX + t, minZ, maxZ },
+    { id: `${room.id}-e1`, kind: "room-wall", minX: maxX - t, maxX, minZ, maxZ: z0 },
+    { id: `${room.id}-e2`, kind: "room-wall", minX: maxX - t, maxX, minZ: z1, maxZ },
+    {
+      id: `${room.id}-bench`,
+      kind: "room-wall",
+      minX: minX + t,
+      maxX: minX + t + 0.85,
+      minZ: minZ + 0.9,
+      maxZ: maxZ - 0.9,
+    },
+  ];
+}
+
+/** AHU, duty, gowning walls, and the return-air bands. Tools and the stocker are separate. */
+export function facilitySolids() {
+  const solids = [];
+  for (const room of FACILITY_ROOMS) {
+    if (room.kind === "gowning") solids.push(...gowningSolids(room));
+    else solids.push({ id: room.id, kind: room.kind, minX: room.minX, maxX: room.maxX, minZ: room.minZ, maxZ: room.maxZ });
+  }
+  for (const band of RETURN_AIR) {
+    solids.push({ id: band.id, kind: band.kind, minX: band.minX, maxX: band.maxX, minZ: band.minZ, maxZ: band.maxZ });
+  }
+  return solids;
+}
+
 export function buildSolids(stations = STATIONS) {
   return [
     ...stations.map((station) => toolSolid(station.place, station.tool)),
     stockerSolid(),
     ...wallSolids(),
+    ...facilitySolids(),
   ];
 }
 
