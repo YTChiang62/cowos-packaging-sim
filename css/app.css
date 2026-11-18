@@ -124,10 +124,10 @@ button, input, select { font: inherit; color: inherit; }
 }
 body.theme-light #vignette {
   background:
-    radial-gradient(ellipse at 50% 42%, transparent 54%, rgba(90, 110, 120, 0.16) 100%),
-    linear-gradient(180deg, rgba(190, 204, 210, 0.16) 0%, transparent 12%, transparent 88%, rgba(170, 186, 194, 0.2) 100%);
+    radial-gradient(ellipse at 50% 46%, transparent 72%, rgba(255, 255, 255, 0.05) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 8%, transparent 92%, rgba(236, 238, 234, 0.05) 100%);
 }
-body.theme-light #grain { opacity: 0.02; }
+body.theme-light #grain { opacity: 0.012; }
 body.theme-neutral #vignette {
   background:
     radial-gradient(ellipse at 50% 45%, transparent 48%, rgba(20, 28, 32, 0.26) 100%),

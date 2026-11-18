@@ -1,13 +1,13 @@
 import * as THREE from "three";
 import { OrbitControls } from "../vendor/OrbitControls.js";
 import { FacilityView } from "./facility-view.js";
-import { HOLD_AT, RAIL_Y, STATIONS, stationById } from "./route.js";
+import { HOLD_AT, RAIL_NODES, RAIL_Y, STATIONS, stationById } from "./route.js";
 import { motion, smooth, specForMorph } from "./morph.js";
 import { Workpiece } from "./product.js";
 import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
 import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
-import { WalkController } from "./walk.js";
+import { OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, WalkController } from "./walk.js";
 import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 
 const BAYS = [
@@ -41,7 +41,11 @@ function makeFloorTexture(palette) {
   const s = 2048;
   const c = document.createElement("canvas");
   c.width = c.height = s;
-  paintFloor(c.getContext("2d"), s, palette, BAYS, BAY_ACCENT);
+  paintFloor(c.getContext("2d"), s, palette, BAYS, BAY_ACCENT, {
+    floor: PLANT_FLOOR,
+    walls: PLANT_WALLS,
+    loop: RAIL_NODES,
+  });
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -109,7 +113,7 @@ function bayLabel(text, accent) {
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.85, depthWrite: false }));
-  sp.scale.set(8, 1.35, 1);
+  sp.scale.set(10.4, 1.72, 1);
   sp.position.y = 0.12;
   sp.userData.redraw = (t) => {
     g.clearRect(0, 0, 768, 128);
@@ -170,15 +174,16 @@ export class Plant {
 
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.Fog(0x000000, 140, 280);
-    this.camera = new THREE.PerspectiveCamera(42, this._aspect(), 0.1, 220);
-    this.camera.position.set(2, 40, 48);
+    const overview = OVERVIEW_CAMERA;
+    this.camera = new THREE.PerspectiveCamera(overview.fov, this._aspect(), 0.15, 480);
+    this.camera.position.set(overview.position[0], overview.position[1], overview.position[2]);
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI * 0.42;
     this.controls.minDistance = 3.2;
-    this.controls.maxDistance = 90;
-    this.controls.target.set(-6, 1.2, 0);
+    this.controls.maxDistance = 160;
+    this.controls.target.set(overview.target[0], overview.target[1], overview.target[2]);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.walking = false;
@@ -521,12 +526,12 @@ export class Plant {
     sun.position.set(24, 40, 18);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 4;
-    sun.shadow.camera.far = 120;
-    sun.shadow.camera.left = -70;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 50;
-    sun.shadow.camera.bottom = -50;
+    sun.shadow.camera.near = 2;
+    sun.shadow.camera.far = 160;
+    sun.shadow.camera.left = -80;
+    sun.shadow.camera.right = 70;
+    sun.shadow.camera.top = 48;
+    sun.shadow.camera.bottom = -48;
     sun.shadow.bias = -0.0007;
     this.scene.add(sun);
     const fill = new THREE.DirectionalLight(0xffffff, 0.3);
@@ -540,32 +545,43 @@ export class Plant {
     this.scene.add(stocker);
     this.lights = { hemi, sun, fill, rim, stocker };
 
+    const fw = PLANT_FLOOR.maxX - PLANT_FLOOR.minX;
+    const fd = PLANT_FLOOR.maxZ - PLANT_FLOOR.minZ;
+    const fcx = (PLANT_FLOOR.minX + PLANT_FLOOR.maxX) / 2;
+    const fcz = (PLANT_FLOOR.minZ + PLANT_FLOOR.maxZ) / 2;
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(100, 80),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.08 })
+      new THREE.PlaneGeometry(fw, fd),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.03 })
     );
     floor.rotation.x = -Math.PI / 2;
+    floor.position.set(fcx, 0, fcz);
     floor.receiveShadow = true;
     this.floor = floor;
     this.scene.add(floor);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(102, 0.6, 82), stdMat(0xffffff, { roughness: 0.9, metalness: 0.05 }));
-    skirt.position.y = -0.36;
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(fw + 1.6, 0.6, fd + 1.6), stdMat(0xffffff, { roughness: 0.9, metalness: 0.05 }));
+    skirt.position.set(fcx, -0.36, fcz);
     this.skirt = skirt;
     this.scene.add(skirt);
 
-    const wallMat = stdMat(0xffffff, { transparent: true, opacity: 0.1, roughness: 0.1, metalness: 0.2 });
+    const { north, south, west, east } = PLANT_WALLS;
+    const spanX = east - west;
+    const spanZ = south - north;
+    const midX = (east + west) / 2;
+    const midZ = (south + north) / 2;
+    const wallH = 6.6;
+    const wallMat = stdMat(0xffffff, { transparent: true, opacity: 0.1, roughness: 0.12, metalness: 0.12 });
     this.wallMat = wallMat;
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(96, 6.5, 0.12), wallMat);
-    wall.position.set(0, 3.2, -39);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(spanX, wallH, 0.14), wallMat);
+    wall.position.set(midX, wallH / 2, north);
     this.scene.add(wall);
     const wall2 = wall.clone();
-    wall2.position.z = 39;
+    wall2.position.set(midX, wallH / 2, south);
     this.scene.add(wall2);
-    const wall3 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 6.5, 78), wallMat);
-    wall3.position.set(-48, 3.2, 0);
+    const wall3 = new THREE.Mesh(new THREE.BoxGeometry(0.14, wallH, spanZ), wallMat);
+    wall3.position.set(west, wallH / 2, midZ);
     this.scene.add(wall3);
     const wall4 = wall3.clone();
-    wall4.position.x = 46;
+    wall4.position.set(east, wallH / 2, midZ);
     this.scene.add(wall4);
   }
 
@@ -580,9 +596,9 @@ export class Plant {
       group.position.set(bay.x, 0, bay.z);
       const hw = bay.w / 2;
       const hd = bay.d / 2;
-      const h = 3.8;
+      const h = 4.7;
       for (const [px, pz] of [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]]) {
-        const p = new THREE.Mesh(new THREE.BoxGeometry(0.12, h, 0.12), frame);
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.16, h, 0.16), frame);
         p.position.set(px, h / 2, pz);
         p.castShadow = true;
         group.add(p);
@@ -593,13 +609,13 @@ export class Plant {
           const doorW = Math.min(8, bay.w * 0.45);
           const side = (bay.w - doorW) / 2;
           for (const sign of [-1, 1]) {
-            const pane = new THREE.Mesh(new THREE.BoxGeometry(side, 2.8, 0.06), glass);
-            pane.position.set(sign * (doorW / 2 + side / 2), 1.6, pz);
+            const pane = new THREE.Mesh(new THREE.BoxGeometry(side, 3.15, 0.06), glass);
+            pane.position.set(sign * (doorW / 2 + side / 2), 1.75, pz);
             group.add(pane);
           }
         } else {
-          const pane = new THREE.Mesh(new THREE.BoxGeometry(sx, 2.8, sz), glass);
-          pane.position.set(px, 1.6, pz);
+          const pane = new THREE.Mesh(new THREE.BoxGeometry(sx, 3.15, sz), glass);
+          pane.position.set(px, 1.75, pz);
           group.add(pane);
         }
       }
@@ -771,8 +787,8 @@ export class Plant {
     this._camTween = {
       fromP: this.camera.position.clone(),
       fromT: this.controls.target.clone(),
-      toP: new THREE.Vector3(2, 40, 48),
-      toT: new THREE.Vector3(-6, 1.2, 0),
+      toP: new THREE.Vector3(OVERVIEW_CAMERA.position[0], OVERVIEW_CAMERA.position[1], OVERVIEW_CAMERA.position[2]),
+      toT: new THREE.Vector3(OVERVIEW_CAMERA.target[0], OVERVIEW_CAMERA.target[1], OVERVIEW_CAMERA.target[2]),
       acc: 0,
       dur: 1.0,
     };

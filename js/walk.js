@@ -4,13 +4,52 @@
  * js/route.js stays the process contract; this module only answers
  * "can the trainee stand here, and which tool is in reach?"
  */
-import { STATIONS, STOCKER } from "./route.js";
+import { LOAD_LOCAL_Z, STATIONS, STOCKER } from "./route.js";
 
 export const PERSON_RADIUS = 0.32;
 export const WALK_SPEED = 2.15;
 export const SPRINT_SPEED = 4.05;
 export const INSPECT_REACH = 2.65;
 export const EYE_HEIGHT = 1.62;
+
+/**
+ * Shared with the plant meshes. Tool groups scale around the machine origin
+ * and then shift along Z so the load port stays on the ceiling-rail node.
+ * 1.55 keeps a gap on the 5 m pack pitch and does not close the aisle.
+ */
+export const TOOL_VISUAL_SCALE = 1.55;
+
+/** Outer cleanroom slab. Tighter than the old 100×80 apron, and wide enough for the stocker. */
+export const PLANT_FLOOR = { minX: -56.2, maxX: 45.9, minZ: -28.7, maxZ: 28.7 };
+
+/** Glass boundary just inside the slab. Collision slabs are centered on these planes. */
+export const PLANT_WALLS = { north: -27.2, south: 27.2, west: -54.6, east: 44.5 };
+
+/**
+ * Default 總覽. Desktop aspects (about 1.6 and 16:9) keep the stocker,
+ * five bays, aisle, and east rail inside the frame.
+ */
+export const OVERVIEW_CAMERA = {
+  fov: 42,
+  position: [10, 74, 82],
+  target: [-6, 0.4, 1],
+};
+
+/** Z added to a tool group's position after a uniform visual scale. Face +1 looks toward +Z. */
+export function toolScaleShiftZ(face, scale = TOOL_VISUAL_SCALE) {
+  const sign = face >= 0 ? -1 : 1;
+  return sign * LOAD_LOCAL_Z * (scale - 1);
+}
+
+/** World XZ of the load port after the visual scale. Matches the unscaled rail node. */
+export function preservedLoadPort(place, scale = TOOL_VISUAL_SCALE) {
+  const face = place.face >= 0 ? 1 : -1;
+  const shift = toolScaleShiftZ(face, scale);
+  const z = face > 0
+    ? place.z + shift + LOAD_LOCAL_Z * scale
+    : place.z + shift - LOAD_LOCAL_Z * scale;
+  return { x: place.x, z };
+}
 
 /** Aisle just east of the stocker, on the incoming end of the line. */
 export const WALK_SPAWN = { x: -42.4, z: 4.6, yaw: 0.4 };
@@ -20,19 +59,23 @@ export const TOOL_HALF_X = 1.38;
 export const TOOL_Z_MIN = -1.22;
 export const TOOL_Z_MAX = 1.86;
 
-export function toolSolid(place, id) {
+export function toolSolid(place, id, scale = TOOL_VISUAL_SCALE) {
   const face = place.face >= 0 ? 1 : -1;
-  const z0 = place.z + face * TOOL_Z_MIN;
-  const z1 = place.z + face * TOOL_Z_MAX;
+  const shift = toolScaleShiftZ(face, scale);
+  const along = (zLocal) => (face > 0 ? shift + zLocal * scale : shift - zLocal * scale);
+  const z0 = place.z + along(TOOL_Z_MIN);
+  const z1 = place.z + along(TOOL_Z_MAX);
+  const half = TOOL_HALF_X * scale;
+  const port = preservedLoadPort(place, scale);
   return {
     id,
     kind: "tool",
-    minX: place.x - TOOL_HALF_X,
-    maxX: place.x + TOOL_HALF_X,
+    minX: place.x - half,
+    maxX: place.x + half,
     minZ: Math.min(z0, z1),
     maxZ: Math.max(z0, z1),
-    ax: place.x,
-    az: place.z + face * 1.42,
+    ax: port.x,
+    az: port.z,
   };
 }
 
@@ -59,11 +102,13 @@ export function stockerSolid() {
 }
 
 export function wallSolids() {
+  const { north, south, west, east } = PLANT_WALLS;
+  const t = 0.4;
   return [
-    { id: "wall-n", kind: "wall", minX: -49.4, maxX: 47.2, minZ: -39.4, maxZ: -38.6 },
-    { id: "wall-s", kind: "wall", minX: -49.4, maxX: 47.2, minZ: 38.6, maxZ: 39.4 },
-    { id: "wall-w", kind: "wall", minX: -48.4, maxX: -47.6, minZ: -39.4, maxZ: 39.4 },
-    { id: "wall-e", kind: "wall", minX: 45.6, maxX: 46.4, minZ: -39.4, maxZ: 39.4 },
+    { id: "wall-n", kind: "wall", minX: west - 1, maxX: east + 1, minZ: north - t, maxZ: north + t },
+    { id: "wall-s", kind: "wall", minX: west - 1, maxX: east + 1, minZ: south - t, maxZ: south + t },
+    { id: "wall-w", kind: "wall", minX: west - t, maxX: west + t, minZ: north - 1, maxZ: south + 1 },
+    { id: "wall-e", kind: "wall", minX: east - t, maxX: east + t, minZ: north - 1, maxZ: south + 1 },
   ];
 }
 
