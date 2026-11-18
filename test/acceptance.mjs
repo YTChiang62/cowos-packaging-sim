@@ -2,7 +2,9 @@
  * Contract and morphology checks that do not need WebGL.
  * Run: node --experimental-detect-module test/acceptance.mjs
  */
-import { Session } from "../js/mes.js";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { BEATS, Session } from "../js/mes.js";
 import {
   FLOW,
   FLOW_ID,
@@ -41,7 +43,20 @@ import {
   toolSolid,
   wallSolids,
 } from "../js/walk.js";
-import { t } from "../js/i18n.js";
+import { hasOwnCopy, t } from "../js/i18n.js";
+import {
+  LOAD_THRESHOLD,
+  OPS_COPY_KEYS,
+  OPS_LAYER_STORAGE_KEY,
+  QUEUE_THRESHOLD,
+  SEVERITY,
+  buildOpsSnapshot,
+  defaultLayers,
+  presentChip,
+  readLayers,
+  visibleChips,
+  writeLayers,
+} from "../js/ops.js";
 import {
   DEFAULT_THEME,
   THEME_IDS,
@@ -1088,6 +1103,280 @@ function memStore(initial = {}) {
     setItem(key, value) { data[key] = String(value); },
   };
 }
+
+function fileHash(rel) {
+  return createHash("sha256").update(readFileSync(new URL(rel, import.meta.url))).digest("hex");
+}
+check(
+  "route.js is unchanged",
+  fileHash("../js/route.js") === "251d3a25c863e4f5dfe751640dded67869bfbb84d6a0f83ff5f45e11f3012950"
+);
+check(
+  "recipes.js is unchanged",
+  fileHash("../js/recipes.js") === "809b9fb75f007bc8809adaec5e99a73cececb681e85023858fde46d9be1bac89"
+);
+
+check(
+  "default ops layers are load, alarm, and queue",
+  defaultLayers().load === true &&
+    defaultLayers().alarm === true &&
+    defaultLayers().queue === true &&
+    defaultLayers().current === false
+);
+{
+  const store = memStore();
+  const saved = writeLayers({ load: false, alarm: true, queue: false, current: true, extra: true }, store);
+  const read = readLayers(store);
+  check(
+    "ops layer selection persists",
+    saved.load === false && saved.current === true && read.alarm === true && read.queue === false && store.getItem(OPS_LAYER_STORAGE_KEY)
+  );
+  check("a broken ops layer payload falls back to the default", readLayers(memStore({ [OPS_LAYER_STORAGE_KEY]: "nope" })).load === true);
+  check("a missing ops layer store uses the default", readLayers(null).queue === true && readLayers(null).current === false);
+}
+
+const quiet = buildOpsSnapshot({
+  intensity: "none",
+  stepIndex: 0,
+  status: "QUEUE",
+  busy: false,
+  craneMode: "AUTO",
+  kgdShortage: false,
+  elapsed: 0,
+});
+check(
+  "an ops snapshot covers five parks and the 21 tools",
+  quiet.bays.length === 5 && quiet.tools.length === 21 && quiet.chips.length === 26
+);
+{
+  const rooms = new Set([...FACILITY_ROOMS, ...RETURN_AIR].map((room) => room.id));
+  check("facility rooms and return air do not get process chips", quiet.chips.every((chip) => !rooms.has(chip.id)));
+}
+check(
+  "utilization and queue depth are integers in range",
+  quiet.tools.every((tool) => Number.isInteger(tool.util) && tool.util >= 0 && tool.util <= 100 && Number.isInteger(tool.queue) && tool.queue >= 0)
+);
+
+const same = buildOpsSnapshot({ intensity: "few", stepIndex: 0, kgdShortage: true, elapsed: 0.4 });
+const later = buildOpsSnapshot({ intensity: "few", stepIndex: 0, kgdShortage: true, elapsed: 7 });
+const early = buildOpsSnapshot({ intensity: "few", stepIndex: 0, kgdShortage: true, elapsed: 0 });
+check("the same time bucket does not move the snapshot", JSON.stringify(early.tools) === JSON.stringify(same.tools));
+check("a later time bucket can nudge utilization", early.tools.some((tool, i) => tool.util !== later.tools[i].util));
+check("a later bucket keeps the same queues", early.tools.every((tool, i) => tool.queue === later.tools[i].queue));
+
+const kgd = new Session({ intensity: "few" });
+const kgdSnap = buildOpsSnapshot(kgd);
+const dbk = kgdSnap.tools.find((tool) => tool.id === "DBK-02");
+const incoming = kgdSnap.bays.find((bay) => bay.id === "incoming");
+check(
+  "a KGD shortage is a material queue at diebank and incoming",
+  dbk.material === true && dbk.queue >= QUEUE_THRESHOLD && incoming.queueSum >= dbk.queue && incoming.id === "incoming"
+);
+check("a KGD shortage does not alarm an unrelated tool", kgdSnap.tools.every((tool) => tool.alarm === false));
+check(
+  "a KGD shortage is the bottleneck and names the die bank",
+  kgdSnap.bottleneck.kind === "material" &&
+    kgdSnap.bottleneck.tool === "DBK-02" &&
+    kgdSnap.bottleneck.adviceKey === "opsAdvice_kgd" &&
+    kgdSnap.bottleneck.severity === SEVERITY.queue
+);
+
+const pausedLine = new Session({ intensity: "none" });
+pausedLine.facility.setMode("PAUSE");
+const pauseSnap = buildOpsSnapshot(pausedLine);
+check(
+  "crane pause is the bottleneck when nothing else is hotter",
+  pauseSnap.bottleneck.kind === "pause" &&
+    pauseSnap.bottleneck.adviceKey === "opsAdvice_pause" &&
+    pauseSnap.bottleneck.severity === SEVERITY.pause &&
+    pauseSnap.craneMode === "PAUSE"
+);
+check("crane pause does not invent a process-tool alarm", pauseSnap.tools.every((tool) => tool.alarm === false) && pauseSnap.bays.every((bay) => bay.alarmCount === 0));
+
+const longQueue = buildOpsSnapshot({
+  intensity: "many",
+  stepIndex: 0,
+  status: "QUEUE",
+  busy: false,
+  craneMode: "AUTO",
+  kgdShortage: false,
+  elapsed: 0,
+});
+const hbond = longQueue.tools.find((tool) => tool.id === "HB-21");
+const otherQueues = longQueue.tools.filter((tool) => tool.id !== "HB-21").map((tool) => tool.queue);
+check(
+  "the longest queue is CoW hybrid bond",
+  hbond.queue >= QUEUE_THRESHOLD &&
+    hbond.queue > Math.max(...otherQueues) &&
+    longQueue.bottleneck.kind === "queue" &&
+    longQueue.bottleneck.tool === "HB-21" &&
+    longQueue.bottleneck.adviceKey === "opsAdvice_queue_hbond"
+);
+const queuePaused = buildOpsSnapshot({
+  intensity: "many",
+  stepIndex: 0,
+  craneMode: "PAUSE",
+  kgdShortage: false,
+  elapsed: 0,
+});
+check("the longest queue outranks crane pause", queuePaused.bottleneck.kind === "queue" && queuePaused.bottleneck.severity > SEVERITY.pause);
+
+const heldQueue = buildOpsSnapshot({
+  intensity: "many",
+  stepIndex: 0,
+  status: "HOLD",
+  hold: { id: "overlay", stationId: "overlay" },
+  craneMode: "AUTO",
+  kgdShortage: false,
+  elapsed: 0,
+});
+const met23 = heldQueue.tools.find((tool) => tool.id === "MET-23");
+const cowBay = heldQueue.bays.find((bay) => bay.id === "cow");
+check(
+  "an open hold outranks a longer queue",
+  heldQueue.tools.find((tool) => tool.id === "HB-21").queue > met23.queue &&
+    heldQueue.bottleneck.kind === "hold" &&
+    heldQueue.bottleneck.tool === "MET-23" &&
+    heldQueue.bottleneck.adviceKey === "opsAdvice_hold_overlay" &&
+    heldQueue.bottleneck.severity === SEVERITY.hold
+);
+check(
+  "an open hold alarms that tool and its bay only",
+  met23.alarm === true &&
+    met23.alarmReason === "overlay" &&
+    cowBay.alarmCount === 1 &&
+    heldQueue.tools.every((tool) => tool.alarm === (tool.id === "MET-23"))
+);
+check(
+  "overlay advice names the metrology tool",
+  t("zh-TW", heldQueue.bottleneck.adviceKey, { tool: heldQueue.bottleneck.tool }).includes("MET-23") &&
+    t("en", heldQueue.bottleneck.adviceKey, { tool: "MET-23" }).includes("MET-23")
+);
+
+const hot = buildOpsSnapshot({
+  intensity: "none",
+  stepIndex: 3,
+  stepId: "hbond",
+  tool: "HB-21",
+  status: "RUN",
+  busy: true,
+  dockedTool: "HB-21",
+  craneMode: "PAUSE",
+  kgdShortage: false,
+  elapsed: 0,
+});
+const hotTool = hot.tools.find((tool) => tool.id === "HB-21");
+const hotBay = hot.bays.find((bay) => bay.id === "cow");
+check(
+  "a busy hero tool is elevated and outranks crane pause",
+  hotTool.busy === true &&
+    hotTool.util >= 90 &&
+    hotTool.util >= LOAD_THRESHOLD &&
+    hotBay.load >= 60 &&
+    hot.bays.every((bay) => bay.id === "cow" || bay.load < hotBay.load) &&
+    hot.bottleneck.kind === "load" &&
+    hot.bottleneck.tool === "HB-21"
+);
+
+function catchProcess(session, stepId) {
+  const processBeat = BEATS.indexOf("process");
+  let guard = 0;
+  while (guard < 400000) {
+    guard += 1;
+    if (session.status === "DONE") return false;
+    if (session.hold) {
+      const action = session.hold.id === "kgd" ? "wait" : "release";
+      const res = session.resolve(action);
+      if (!res.ok) return false;
+      if (session.hold?.waiting) pump(session);
+      continue;
+    }
+    if (session.step().id === stepId && session.busy && session.beatIndex === processBeat && session.processProgress > 0.05) {
+      return true;
+    }
+    if (!session.busy && !session.awaitingTransport) session.advance();
+    session.tick(0.05);
+  }
+  return false;
+}
+
+const liveHero = new Session({ intensity: "none" });
+check("the hero lot can be caught on the bonder", catchProcess(liveHero, "hbond") === true);
+const liveSnap = buildOpsSnapshot(liveHero);
+const liveTool = liveSnap.tools.find((tool) => tool.id === liveHero.step().tool);
+const liveBay = liveSnap.bays.find((bay) => bay.id === liveTool.bay);
+check(
+  "the tool processing the hero lot is busy and its bay load is elevated",
+  liveHero.step().tool === "HB-21" &&
+    liveTool.busy === true &&
+    liveTool.util >= 85 &&
+    liveBay.load >= 60 &&
+    liveSnap.bays.every((bay) => bay.id === liveBay.id || bay.load < liveBay.load)
+);
+
+const warp = new Session({ intensity: "many", role: "PE" });
+runUntil(warp, (s) => s.hold?.id === "warpage");
+const warpSnap = buildOpsSnapshot(warp);
+const warpTool = warpSnap.tools.find((tool) => tool.id === "MET-07");
+const warpBay = warpSnap.bays.find((bay) => bay.id === "wos");
+check(
+  "a warpage hold alarms MET-07 and the WoS bay",
+  warp.hold?.id === "warpage" &&
+    warpTool.alarm === true &&
+    warpTool.alarmReason === "warpage" &&
+    warpBay.alarmCount === 1 &&
+    warpSnap.bottleneck.kind === "hold" &&
+    warpSnap.bottleneck.tool === "MET-07" &&
+    warpSnap.bottleneck.adviceKey === "opsAdvice_hold_warpage"
+);
+check("the warpage hold does not alarm a different tool", warpSnap.tools.every((tool) => tool.alarm === (tool.id === "MET-07")));
+check("clearing the warpage hold removes that alarm", warp.resolve("release").ok === true && warp.hold == null);
+const cleared = buildOpsSnapshot(warp);
+check(
+  "the cleared hold is gone from the tool and the bay",
+  cleared.tools.every((tool) => tool.alarm === false) && cleared.bays.every((bay) => bay.alarmCount === 0) && cleared.holdId == null
+);
+
+const loadOnly = { load: true, alarm: false, queue: false, current: false };
+const alarmOnly = { load: false, alarm: true, queue: false, current: false };
+const queueOnly = { load: false, alarm: false, queue: true, current: false };
+const currentOnly = { load: false, alarm: false, queue: false, current: true };
+const diceChip = longQueue.chips.find((chip) => chip.id === "DIC-81");
+const markChip = longQueue.chips.find((chip) => chip.id === "MRK-55");
+const incomingChip = longQueue.chips.find((chip) => chip.kind === "bay" && chip.id === "incoming");
+const hbondChip = longQueue.chips.find((chip) => chip.id === "HB-21");
+check("the load layer keeps every park chip", visibleChips(longQueue, loadOnly).filter((chip) => chip.kind === "bay").length === 5);
+check("the load layer hides an idle tool that only has a short queue", presentChip(diceChip, loadOnly).visible === false && diceChip.queue > 0 && diceChip.loadVisible === false);
+check("the load layer still shows a busy tool", presentChip(hbondChip, loadOnly).visible === true && presentChip(hbondChip, loadOnly).load === true && presentChip(hbondChip, loadOnly).queue === false);
+check("the queue layer shows the long queue and hides an empty one", presentChip(hbondChip, queueOnly).visible === true && presentChip(hbondChip, queueOnly).queue === true && presentChip(markChip, queueOnly).visible === false);
+check("the alarm layer hides a park with no alarm", presentChip(incomingChip, alarmOnly).visible === false);
+const alarmChips = visibleChips(heldQueue, alarmOnly);
+check(
+  "the alarm layer shows only the held tool and its park",
+  alarmChips.length === 2 &&
+    alarmChips.some((chip) => chip.id === "MET-23") &&
+    alarmChips.some((chip) => chip.kind === "bay" && chip.id === "cow")
+);
+const heroChip = quiet.chips.find((chip) => chip.id === "IQC-11");
+check("the current layer shows the hero tool without turning the others on", presentChip(heroChip, currentOnly).visible === true && presentChip(heroChip, currentOnly).current === true && presentChip(markChip, currentOnly).visible === false);
+
+for (const lang of ["zh-TW", "zh-CN", "en"]) {
+  for (const key of OPS_COPY_KEYS) {
+    check(`${lang} has ops copy ${key}`, hasOwnCopy(lang, key));
+  }
+}
+check(
+  "zh-TW crane labels stay 自動派車 / 手動叫車 / 暫停",
+  t("zh-TW", "modeAuto") === "自動派車" && t("zh-TW", "modeManual") === "手動叫車" && t("zh-TW", "modePause") === "暫停"
+);
+check(
+  "zh-CN crane labels stay 自动派车 / 手动叫车 / 暂停",
+  t("zh-CN", "modeAuto") === "自动派车" && t("zh-CN", "modeManual") === "手动叫车" && t("zh-CN", "modePause") === "暂停"
+);
+check(
+  "English crane labels stay Auto dispatch / Manual call / Pause",
+  t("en", "modeAuto") === "Auto dispatch" && t("en", "modeManual") === "Manual call" && t("en", "modePause") === "Pause"
+);
 
 if (failed) {
   console.error(`\n${failed} check(s) failed`);

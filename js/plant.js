@@ -10,6 +10,7 @@ import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
 import { FACILITY_ROOMS, OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, RETURN_AIR, WalkController } from "./walk.js";
 import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 import { buildFacilityShell, makeBillboard, makeFlatTag } from "./shell.js";
+import { OpsView } from "./ops-view.js";
 
 const BAYS = [
   { id: "incoming", x: -36.75, z: -18, w: 16, d: 12 },
@@ -173,6 +174,9 @@ export class Plant {
     this._keys = new Set();
     this.onInspect = null;
     this.onWalk = null;
+    this.opsFocus = null;
+    this._opsSnapshot = null;
+    this._opsLayers = null;
 
     this._buildWorld();
     this._buildBays();
@@ -371,6 +375,9 @@ export class Plant {
     }
     for (const sign of this.billboards || []) {
       sign.userData.redraw?.(this.tFn(sign.userData.labelKey));
+    }
+    if (this._opsSnapshot && this.opsView) {
+      this.opsView.sync(this._opsSnapshot, this._opsLayers, this.tFn);
     }
   }
 
@@ -677,6 +684,32 @@ export class Plant {
       });
       poseTool(this.tools.get(station.tool), motion(station.id, 0, 0), 0);
     }
+    this.opsView = new OpsView(this.scene);
+    this._publishOpsAnchors();
+  }
+
+  _publishOpsAnchors() {
+    const tools = [];
+    for (const rec of this.tools.values()) {
+      tools.push({
+        id: rec.id,
+        x: rec.group.position.x,
+        z: rec.group.position.z,
+        face: rec.face,
+      });
+    }
+    this.opsView.setAnchors(tools);
+  }
+
+  setOps(snapshot, layers) {
+    this._opsSnapshot = snapshot || null;
+    this._opsLayers = layers || null;
+    if (!this.opsView) return;
+    this.opsView.sync(this._opsSnapshot, this._opsLayers, this.tFn);
+  }
+
+  setOpsFocus(toolId) {
+    this.opsFocus = toolId || null;
   }
 
   _buildShuttle() {
@@ -1052,6 +1085,12 @@ export class Plant {
       sign.material.opacity = signOpacity;
       sign.visible = signOpacity > 0.05;
     }
+
+    this.opsView?.pose({
+      walking: this.walking,
+      camY: this.camera.position.y,
+      nearbyTool: this.walking ? this.walker.inspectId : this.opsFocus,
+    });
 
     this.renderer.render(this.scene, this.camera);
   }

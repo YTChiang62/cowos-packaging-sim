@@ -142,6 +142,8 @@ body.theme-neutral #grain { opacity: 0.035; }
 .stage-rail,
 .cam-dock,
 .theme-dock,
+.ops-card,
+.ops-layers,
 .disclaimer,
 .mes-beats,
 .radio-dock {
@@ -592,6 +594,85 @@ body.theme-neutral #grain { opacity: 0.035; }
 .tool-dock { position: fixed; }
 .tool-name-row { position: relative; padding-right: 20px; }
 
+.ops-card {
+  top: 128px;
+  right: 344px;
+  width: 268px;
+  padding: 12px 14px 12px;
+  z-index: 5;
+}
+.ops-card[hidden] { display: none !important; }
+.ops-card h2 {
+  margin: 2px 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.ops-card p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ice);
+}
+.ops-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ops-stats:empty { display: none; }
+.ops-stat {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(62, 224, 192, 0.12);
+  color: var(--mint);
+}
+.ops-stat.is-alarm {
+  background: rgba(255, 107, 122, 0.16);
+  color: #ffd4d8;
+}
+.ops-stat.is-queue {
+  background: rgba(240, 193, 75, 0.14);
+  color: #f0c14b;
+}
+.ops-layers {
+  top: 292px;
+  right: 344px;
+  bottom: auto;
+  width: 268px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-radius: 18px;
+  min-width: 0;
+  z-index: 6;
+}
+.ops-layers .theme-kicker {
+  flex: 1 0 100%;
+}
+.ops-layers button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ice);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-align: left;
+}
+.ops-layers button[aria-pressed="true"],
+.ops-layers button:hover {
+  background: rgba(62, 224, 192, 0.12);
+  color: var(--mint);
+}
+
 .theme-dock {
   right: var(--safe);
   bottom: 292px;
@@ -887,6 +968,14 @@ body.theme-neutral #grain { opacity: 0.035; }
   .facility-dock { top: auto; bottom: 120px; width: calc(100% - 32px); max-height: 28%; }
   .tool-dock { top: auto; bottom: 130px; right: var(--safe); width: calc(100% - 32px); }
   .cam-dock { display: none; }
+  .ops-card { top: auto; right: var(--safe); bottom: 168px; width: min(280px, calc(100% - 32px)); }
+  .ops-layers {
+    bottom: 86px;
+    left: var(--safe);
+    right: auto;
+    flex-direction: row;
+    min-width: 0;
+  }
   .theme-dock {
     bottom: 86px;
     flex-direction: row;
