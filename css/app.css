@@ -595,8 +595,8 @@ body.theme-neutral #grain { opacity: 0.035; }
 .tool-name-row { position: relative; padding-right: 20px; }
 
 .ops-card {
-  top: 128px;
-  right: 344px;
+  top: 176px;
+  right: var(--safe);
   width: 268px;
   padding: 12px 14px 12px;
   z-index: 5;
@@ -641,8 +641,8 @@ body.theme-neutral #grain { opacity: 0.035; }
   color: #f0c14b;
 }
 .ops-layers {
-  top: 292px;
-  right: 344px;
+  top: 86px;
+  right: var(--safe);
   bottom: auto;
   width: 268px;
   display: flex;
@@ -1007,11 +1007,16 @@ body.theme-neutral #grain { opacity: 0.035; }
 }
 .catalog-sheet {
   pointer-events: auto;
-  width: min(420px, calc(100% - 32px));
+  width: min(440px, calc(100% - 32px));
   margin: 84px 16px 16px auto;
   max-height: calc(100vh - 108px);
   overflow: auto;
   padding: 18px 18px 14px;
+}
+.catalog-sheet h1 {
+  font-size: 22px;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
 .overlay.run-layer {
   background: rgba(7, 16, 22, 0.28);
