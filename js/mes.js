@@ -97,13 +97,14 @@ export class Session {
    * Uses the same approach refusal the live line uses.
    */
   _seedKgdHold() {
-    const idx = this.flow.findIndex((step) => step.id === "diebank");
+    const stationId = this.product.holds.kgd?.stationId;
+    const idx = this.flow.findIndex((step) => step.id === stationId);
     if (idx < 0) return;
     this.stepIndex = idx;
     this.beatIndex = BEATS.indexOf("transport");
-    const approach = this.facility.beginApproach("diebank");
+    const approach = this.facility.beginApproach(stationId);
     if (!approach.ok && approach.hold === "kgd") {
-      this.firedHolds.add("diebank");
+      this.firedHolds.add(stationId);
       this._openHold("kgd");
     }
   }
@@ -113,7 +114,8 @@ export class Session {
    * runChoice is restored so a catalog lot can still ask auto vs step.
    */
   _seedScenarioHold(id) {
-    if (!this.flow.some((step) => step.id === id)) return;
+    const stationId = this.product.holds[id]?.stationId || id;
+    if (!this.flow.some((step) => step.id === stationId)) return;
     const restore = this.runChoice;
     this.runChoice = "step";
     this.auto = false;
@@ -319,12 +321,13 @@ export class Session {
       }
     }
 
+    const beatScale = this.flow.length > 40 ? 0.16 : 1;
     const durations = {
-      prepare: 0.45,
-      "job-in": 0.55,
+      prepare: 0.45 * beatScale,
+      "job-in": 0.55 * beatScale,
       process: step.duration,
-      "job-out": 0.4,
-      "track-out": 0.35,
+      "job-out": 0.4 * beatScale,
+      "track-out": 0.35 * beatScale,
     };
     this._acc = 0;
     this._goal = durations[beat] || 0.5;
@@ -480,9 +483,9 @@ export class Session {
     this.hold = null;
     if (id === "kgd" && BEATS[this.beatIndex] === "transport") {
       this.facility.onHoldCleared({ action, stationId, qty: this.lot.goodSites });
-      const approach = this.facility.beginApproach("diebank");
+      const approach = this.facility.beginApproach(stationId);
       if (!approach.ok) {
-        this.firedHolds.add("diebank");
+        this.firedHolds.add(stationId);
         this._openHold("kgd");
         return;
       }
@@ -548,14 +551,12 @@ export class Session {
   _applyProcessEffects(step) {
     const lot = this.lot;
     this.facility.presentOutput(step.id);
-    if (step.id === "diebank") lot.notes.push("kgd-issued");
-    if (step.id === "hbond") lot.notes.push("cow-bonded");
-    if (step.id === "backgrind") lot.notes.push("thinned");
-    if (step.id === "dice") lot.notes.push("singulated");
-    if (step.id === "wos") lot.notes.push("wos-seated");
-    if (step.id === "ufcure") lot.notes.push("underfilled");
-    if (step.id === "ball") lot.notes.push("balled");
-    if (step.id === "pack") lot.notes.push("packed");
+    if (step.morphOut === "issued" && step.morphIn !== "issued") lot.notes.push("kgd-issued");
+    if (step.morphOut === "bonded" && step.morphIn !== "bonded") lot.notes.push("cow-bonded");
+    if (step.morphOut === "os" && step.morphIn !== "os") lot.notes.push("os-seated");
+    if (step.morphOut === "underfilled" && step.morphIn !== "underfilled") lot.notes.push("underfilled");
+    if (step.morphOut === "balled" && step.morphIn !== "balled") lot.notes.push("balled");
+    if (step.morphOut === "packed" && step.morphIn !== "packed") lot.notes.push("packed");
   }
 
   /** Carrier model while the lot is moving into this station. */

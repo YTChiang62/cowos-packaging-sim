@@ -11,9 +11,9 @@ export function scenarioApplies(product, id) {
   if (id === "first" || id === "pause") return true;
   const flowIds = new Set((product?.flow || []).map((step) => step.id));
   const holds = product?.holds || {};
-  if (id === "overlay") return !!(holds.overlay && flowIds.has("overlay"));
-  if (id === "warpage") return !!(holds.warpage && flowIds.has("warpage"));
-  if (id === "kgd") return !!(holds.kgd && flowIds.has("diebank"));
+  if (id === "overlay") return !!(holds.overlay && flowIds.has(holds.overlay.stationId));
+  if (id === "warpage") return !!(holds.warpage && flowIds.has(holds.warpage.stationId));
+  if (id === "kgd") return !!(holds.kgd && flowIds.has(holds.kgd.stationId));
   return false;
 }
 

@@ -2,7 +2,7 @@ import { PRODUCTS } from "./catalog.js";
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
 import { buildKpiFromSession } from "./kpi.js";
 import { BEATS, STEPS } from "./mes.js";
-import { PORTS, STATIONS, recipeById } from "./route.js";
+import { MODULES, PORTS, STATIONS, moduleById, recipeById, stageById } from "./route.js";
 import { afterActionFigures, buildAfterAction, scenariosForProduct } from "./scenario.js";
 
 
@@ -178,9 +178,15 @@ export function renderCatalog(lang, { selectedId = null, briefing = false, scena
   stepLabel.textContent = t(lang, "briefSteps");
   const steps = document.createElement("ol");
   steps.className = "brief-steps";
-  product.flow.forEach((step, index) => {
+  const seenStages = [];
+  product.flow.forEach((step) => {
+    if (seenStages.includes(step.stage)) return;
+    seenStages.push(step.stage);
+    const stage = stageById(step.stage);
+    const count = product.flow.filter((item) => item.stage === step.stage).length;
     const li = document.createElement("li");
-    li.textContent = `${index + 1}. ${t(lang, "step_" + step.id)} · ${step.tool}`;
+    const name = stage ? stage.name[lang === "en" ? 2 : lang === "zh-CN" ? 1 : 0] : step.stage;
+    li.textContent = `${stage?.code || ""} ${name} · ${count}`;
     steps.append(li);
   });
   const note = document.createElement("p");
@@ -196,7 +202,12 @@ export function renderLot(lang, session, snap, els) {
   els.lotProduct.textContent = t(lang, session.product.nameKey);
   els.lotStatus.textContent = status;
   els.lotStatus.className = `badge badge-${status}`;
-  els.lotStep.textContent = `${stepIndex + 1}/${session.flow.length}  ${t(lang, "step_" + step.id)}`;
+  const stage = stageById(step.stage);
+  const mod = moduleById(step.module);
+  const langIndex = lang === "en" ? 2 : lang === "zh-CN" ? 1 : 0;
+  const stageName = stage ? stage.name[langIndex] : "";
+  const modName = mod ? mod.name[langIndex] : "";
+  els.lotStep.textContent = `${modName} · ${step.code} ${stageName} · ${stepIndex + 1}/${session.flow.length} ${t(lang, "step_" + step.id)}`;
   els.lotTool.textContent = step.tool;
   els.lotRecipe.textContent = step.recipe;
   if (els.lotParams) fillParams(lang, step.recipe, els.lotParams, session.product.recipes);
@@ -260,37 +271,91 @@ export function fillParams(lang, recipeId, el, recipes) {
   }
 }
 
+let flowPin = null;
+let flowPinStep = null;
+
 export function renderStages(lang, snap, els, flow = STEPS) {
+  const current = flow[Math.min(snap.stepIndex, flow.length - 1)];
+  if (!current) return;
+  if (flowPinStep !== current.id) {
+    flowPin = null;
+    flowPinStep = current.id;
+  }
+  const moduleId = flowPin?.module || current.module;
+  const stageId = flowPin?.module === current.module || !flowPin ? (flowPin?.stage || current.stage) : (
+    flow.find((step) => step.module === moduleId)?.stage
+  );
   els.stageRail.innerHTML = "";
-  let lastBay = null;
-  let current = null;
-  for (let i = 0; i < flow.length; i++) {
-    const st = flow[i];
-    if (st.bay !== lastBay) {
-      const lab = document.createElement("span");
-      lab.className = "flow-bay";
-      lab.textContent = t(lang, "bay_" + st.bay);
-      els.stageRail.append(lab);
-      lastBay = st.bay;
-    }
+  const mods = document.createElement("div");
+  mods.className = "flow-mods";
+  const moduleIds = [];
+  for (const step of flow) {
+    if (!moduleIds.includes(step.module)) moduleIds.push(step.module);
+  }
+  for (const id of moduleIds) {
+    const mod = MODULES.find((item) => item.id === id) || moduleById(id);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "flow-mod";
+    if (id === moduleId) btn.classList.add("is-current");
+    const done = flow.filter((step) => step.module === id && (flow.indexOf(step) < snap.stepIndex || snap.status === "DONE")).length;
+    const total = flow.filter((step) => step.module === id).length;
+    const name = mod ? t(lang, "bay_" + id) : id;
+    btn.textContent = `${name} ${done}/${total}`;
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const first = flow.find((step) => step.module === id);
+      flowPin = { module: id, stage: first?.stage };
+      renderStages(lang, snap, els, flow);
+    });
+    mods.append(btn);
+  }
+  els.stageRail.append(mods);
+  const stages = document.createElement("div");
+  stages.className = "flow-stages";
+  const stageIds = [];
+  for (const step of flow) {
+    if (step.module === moduleId && !stageIds.includes(step.stage)) stageIds.push(step.stage);
+  }
+  for (const id of stageIds) {
+    const stage = stageById(id);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "flow-stage";
+    if (id === stageId) btn.classList.add("is-current");
+    const name = stage ? stage.name[lang === "en" ? 2 : lang === "zh-CN" ? 1 : 0] : id;
+    btn.textContent = `${stage?.code || ""} ${name}`;
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      flowPin = { module: moduleId, stage: id };
+      renderStages(lang, snap, els, flow);
+    });
+    stages.append(btn);
+  }
+  els.stageRail.append(stages);
+  const steps = document.createElement("div");
+  steps.className = "flow-steps";
+  let focus = null;
+  flow.forEach((step, index) => {
+    if (step.stage !== stageId) return;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "stage-chip";
-    btn.dataset.station = st.id;
-    btn.dataset.stage = st.id;
-    btn.textContent = `${i + 1} ${t(lang, "step_" + st.id)}`;
-    if (i === snap.stepIndex && snap.status !== "DONE") {
+    btn.dataset.station = step.id;
+    btn.textContent = `${step.code} ${t(lang, "step_" + step.id)}`;
+    if (index === snap.stepIndex && snap.status !== "DONE") {
       btn.classList.add("is-current");
-      current = btn;
-    } else if (i < snap.stepIndex || snap.status === "DONE") btn.classList.add("is-done");
-    if (snap.status === "HOLD" && i === snap.stepIndex) {
+      focus = btn;
+    } else if (index < snap.stepIndex || snap.status === "DONE") btn.classList.add("is-done");
+    if (snap.status === "HOLD" && index === snap.stepIndex) {
       btn.classList.add("is-hold");
       btn.classList.remove("is-current");
-      current = btn;
+      focus = btn;
     }
-    els.stageRail.append(btn);
-  }
-  current?.scrollIntoView({ block: "nearest", inline: "center" });
+    steps.append(btn);
+  });
+  els.stageRail.append(steps);
+  focus?.scrollIntoView({ block: "nearest", inline: "center" });
 }
 
 export function renderHold(lang, session, els) {
@@ -330,7 +395,9 @@ function writeLive(els, lang, { state, carrier, morph, hold, lot }) {
 
 export function showTool(lang, session, els, toolId) {
   const flow = session?.flow || STEPS;
-  const step = flow.find((s) => s.tool === toolId);
+  const step = (session && session.step().tool === toolId)
+    ? session.step()
+    : flow.find((s) => s.tool === toolId);
   const equipped = STATIONS.find((s) => s.tool === toolId);
   els.toolDock.classList.add("is-on");
   if (toolId === "stocker") {

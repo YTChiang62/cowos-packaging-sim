@@ -334,7 +334,12 @@ export class Workpiece {
     const stackThin = 1 - (pose.thin || 0) * 0.38;
     this.stack.scale.set(ss, ss * stackThin, ss);
     this.logic.position.set(pose.logic.x, pose.logic.y, pose.logic.z);
-    pose.hbms.forEach((h, i) => this.hbms[i].position.set(h.x, h.y, h.z));
+    const dieOp = pose.dieOp == null ? 1 : pose.dieOp;
+    this.logic.visible = dieOp > 0.04;
+    pose.hbms.forEach((h, i) => {
+      this.hbms[i].position.set(h.x, h.y, h.z);
+      this.hbms[i].visible = dieOp > 0.04;
+    });
     this.bond.position.set(pose.bond.x, pose.bond.y, pose.bond.z);
     const bs = Math.max(0.001, pose.bond.s);
     this.bond.scale.setScalar(bs);
@@ -350,7 +355,10 @@ export class Workpiece {
     this.markPlate.visible = this.mark.visible;
     this.mark.position.set(pose.logic.x, pose.logic.y + 0.1, pose.logic.z + 0.08);
     this.markPlate.position.set(pose.logic.x, pose.logic.y + 0.05, pose.logic.z + 0.08);
-    this.coupon.visible = fadeMaterial(this.couponMat, pose.couponOp);
+    const mold = pose.mold || 0;
+    this.coupon.position.y = mold > 0.05 ? 0.2 : 0.02;
+    this.coupon.scale.set(mold > 0.05 ? 1.2 : 1, mold > 0.05 ? 2.2 : 1, mold > 0.05 ? 1.2 : 1);
+    this.coupon.visible = fadeMaterial(this.couponMat, Math.max(pose.couponOp || 0, mold));
     if (pose.ring > 0.45) {
       this.logicMat.emissive.setHex(0x8a2030);
       this.logicMat.emissiveIntensity = 0.45;

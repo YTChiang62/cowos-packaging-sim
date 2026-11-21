@@ -4,7 +4,7 @@
  * js/route.js stays the process contract; this module only answers
  * "can the trainee stand here, and which tool is in reach?"
  */
-import { LOAD_LOCAL_Z, STATIONS, STOCKER } from "./route.js";
+import { LOAD_LOCAL_Z, STOCKER, TOOLS } from "./route.js";
 
 export const PERSON_RADIUS = 0.32;
 export const WALK_SPEED = 2.15;
@@ -177,9 +177,17 @@ export function facilitySolids() {
   return solids;
 }
 
-export function buildSolids(stations = STATIONS) {
+export function buildSolids(stations = TOOLS) {
+  const seen = new Set();
+  const tools = [];
+  for (const station of stations) {
+    const id = station.tool || station.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    tools.push(toolSolid(station.place, id));
+  }
   return [
-    ...stations.map((station) => toolSolid(station.place, station.tool)),
+    ...tools,
     stockerSolid(),
     ...wallSolids(),
     ...facilitySolids(),

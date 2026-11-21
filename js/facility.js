@@ -6,6 +6,8 @@
 import { Amhs } from "./amhs.js";
 import {
   DOCK_REQUIREMENTS,
+  HOLDS,
+  S12_HOLDS,
   OUTPUT_PRESENT,
   PORTS,
   PUTAWAY,
@@ -53,6 +55,17 @@ export class Facility {
     const reserved = [];
     const staged = [];
     for (const req of reqs) {
+      if (req.role !== "issue") {
+        const carrier = req.role === "follow" ? this._named(req.sku) : this.wh.get(this.lotCarrierId);
+        const tool = PORTS[req.port]?.tool;
+        const parked = carrier && tool && carrier.type === req.type
+          && (carrier.location === `port:${req.port}` || carrier.location === `tool:${tool}`);
+        if (parked) {
+          carrier.location = `tool:${tool}`;
+          if (carrier.status !== "locked") carrier.status = "reserved";
+          continue;
+        }
+      }
       if (this._satisfied(req)) continue;
       if (req.role === "issue") {
         const issued = this.wh.reserve({
@@ -169,6 +182,7 @@ export class Facility {
     }
     if (present.markKgd) {
       const lot = this.wh.get(this.lotCarrierId);
+      if (lot?.sku === "kgd") lot.sku = "kgd-issued";
       if (lot) this._toPort(lot, present.port);
       for (const carrier of this.wh.carriers) {
         if (carrier.location === `tool:${tool}` && carrier.sku === "kgd") {
@@ -195,7 +209,8 @@ export class Facility {
           this._toPort(lot, src);
           this._enqueue(lot, `io:${present.returnZone}`, "return");
         }
-        if (present.returnSku && present.returnZone) {
+        const skuZone = present.sideZone || present.returnZone;
+        if (present.returnSku && skuZone) {
           for (const carrier of this.wh.carriers) {
             const here = carrier.location === `tool:${tool}` || String(carrier.location).startsWith(`port:${tool}`);
             if (carrier.sku === present.returnSku && here) {
@@ -203,7 +218,7 @@ export class Facility {
               carrier._return = true;
               const src = this._portFor(tool, carrier.type);
               if (src) this._toPort(carrier, src);
-              this._enqueue(carrier, `io:${present.returnZone}`, "return");
+              this._enqueue(carrier, `io:${skuZone}`, "return");
             }
           }
         }
@@ -272,7 +287,8 @@ export class Facility {
   onHoldCleared({ action, stationId, qty }) {
     this.holdOpen = false;
     this.amhs.clearHold();
-    if (stationId === "diebank" && (action === "wait" || action === "partial" || action === "release")) {
+    const kgdStation = stationId === HOLDS.kgd.stationId || stationId === S12_HOLDS.kgd.stationId;
+    if (kgdStation && (action === "wait" || action === "partial" || action === "release")) {
       this.wh.replenishKgd(action === "partial" ? qty : this.kgdQty);
       return;
     }
