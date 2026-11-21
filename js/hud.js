@@ -5,18 +5,66 @@
 
 export const HUD_STORAGE_KEY = "apex3d-hud";
 
+export const HUD_PRESET_IDS = ["overview", "follow", "walk"];
+
 export const HUD_PANELS = [
   { id: "lot-dock", labelKey: "hudLot", large: true, defaultHidden: true },
   { id: "facility-dock", labelKey: "hudFacility", large: true, defaultHidden: true },
+  { id: "kpi-card", labelKey: "hudKpi", large: true, defaultHidden: false },
   { id: "ops-card", labelKey: "hudOps", large: true, defaultHidden: false },
   { id: "ops-layers", labelKey: "hudLayers", large: true, defaultHidden: false },
   { id: "tool-dock", labelKey: "hudTool", large: true, defaultHidden: false },
   { id: "stage-rail", labelKey: "hudRail", large: true, defaultHidden: false },
+  { id: "preset-dock", labelKey: "hudPreset", large: false, defaultHidden: false },
   { id: "theme-dock", labelKey: "hudTheme", large: false, defaultHidden: false },
   { id: "cam-dock", labelKey: "hudCam", large: false, defaultHidden: false },
   { id: "mes-beats", labelKey: "hudBeats", large: false, defaultHidden: false },
   { id: "radio-dock", labelKey: "hudRadio", large: false, defaultHidden: false },
 ];
+
+/**
+ * Visibility each preset writes. true means hidden.
+ * Overview keeps the v10 tucked lot and warehouse docks and shows the shift
+ * card, the bottleneck card, and the factory-layer toggles.
+ * Follow opens the lot dock and the tool dock and keeps a compact ops/KPI view.
+ * Walk tucks the large docks and does not itself enter walk mode.
+ */
+const PRESET_HIDDEN = {
+  overview: {
+    "lot-dock": true,
+    "facility-dock": true,
+    "kpi-card": false,
+    "ops-card": false,
+    "ops-layers": false,
+    "tool-dock": false,
+    "stage-rail": false,
+  },
+  follow: {
+    "lot-dock": false,
+    "facility-dock": true,
+    "kpi-card": false,
+    "ops-card": false,
+    "ops-layers": true,
+    "tool-dock": false,
+    "stage-rail": false,
+  },
+  walk: {
+    "lot-dock": true,
+    "facility-dock": true,
+    "kpi-card": true,
+    "ops-card": true,
+    "ops-layers": true,
+    "tool-dock": true,
+    "stage-rail": true,
+  },
+};
+
+/** Camera the preset asks for. "keep" must not enter or exit walk. */
+export function presetCamera(preset) {
+  if (preset === "overview") return "overview";
+  if (preset === "follow") return "lot";
+  return "keep";
+}
 
 const PANEL_IDS = new Set(HUD_PANELS.map((panel) => panel.id));
 
@@ -27,7 +75,7 @@ function blankPanel(hidden) {
 export function defaultHudState() {
   const panels = {};
   for (const panel of HUD_PANELS) panels[panel.id] = blankPanel(panel.defaultHidden);
-  return { focus: false, beforeFocus: null, panels };
+  return { focus: false, beforeFocus: null, preset: "overview", panels };
 }
 
 function cloneState(state) {
@@ -38,6 +86,7 @@ export function normalizeHudState(raw) {
   const base = defaultHudState();
   if (!raw || typeof raw !== "object") return base;
   base.focus = raw.focus === true;
+  base.preset = HUD_PRESET_IDS.includes(raw.preset) ? raw.preset : "overview";
   if (raw.beforeFocus && typeof raw.beforeFocus === "object") {
     base.beforeFocus = {};
     for (const id of PANEL_IDS) {
@@ -99,6 +148,20 @@ export function movePanel(state, id, x, y) {
   if (!PANEL_IDS.has(id)) return next;
   next.panels[id].x = Math.round(x);
   next.panels[id].y = Math.round(y);
+  return next;
+}
+
+export function applyPreset(state, preset) {
+  const next = cloneState(normalizeHudState(state));
+  if (!HUD_PRESET_IDS.includes(preset)) return next;
+  next.preset = preset;
+  next.focus = false;
+  next.beforeFocus = null;
+  const spec = PRESET_HIDDEN[preset];
+  for (const [id, hidden] of Object.entries(spec)) {
+    if (!next.panels[id]) continue;
+    next.panels[id].hidden = hidden;
+  }
   return next;
 }
 
@@ -258,6 +321,11 @@ export function bindHud(doc, storage, label) {
     show(id) {
       state = writeHud(showPanel(state, id), storage);
       paint();
+    },
+    usePreset(id) {
+      state = writeHud(applyPreset(state, id), storage);
+      paint();
+      return state;
     },
   };
 }

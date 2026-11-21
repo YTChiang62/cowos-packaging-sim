@@ -1,6 +1,6 @@
 /**
- * Billboard chips for the ops snapshot. Sprites only — they are not walk
- * solids and they are not part of the tool pick list.
+ * Billboard chips for the ops snapshot, plus the small companion-lot meshes.
+ * Sprites and these meshes are not walk solids and they are not tool bodies.
  */
 import * as THREE from "three";
 import { presentChip } from "./ops.js";
@@ -250,5 +250,105 @@ export class OpsView {
     entry.sprite.position.set(anchor.x, y, anchor.z + aisle * zLift);
     const width = overview ? 5.6 : spec.rich ? 1.7 : walking ? 2.15 : 4.2;
     entry.sprite.scale.set(width, width * (plateH / 1024), 1);
+  }
+}
+
+const LOT_COLORS = [0x3ee0c0, 0x8aa0ff, 0xe0a15a, 0xe7a098];
+
+function makeCompanionMesh(slot) {
+  const color = LOT_COLORS[slot % LOT_COLORS.length];
+  const group = new THREE.Group();
+  group.name = "companion-lot";
+  const wafer = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.04, 18),
+    new THREE.MeshStandardMaterial({ color: 0xd5dee4, metalness: 0.62, roughness: 0.28 })
+  );
+  const die = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 0.045, 0.13),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.22, roughness: 0.4 })
+  );
+  die.position.y = 0.055;
+  const cap = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.02, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0xf4f7f8, metalness: 0.4, roughness: 0.35 })
+  );
+  cap.position.y = 0.09;
+  group.add(wafer, die, cap);
+  group.userData.die = die;
+  return group;
+}
+
+/** Small product meshes for companion lots. Not crane jobs and not walk solids. */
+export class CompanionLayer {
+  constructor(scene) {
+    this.scene = scene;
+    this.root = new THREE.Group();
+    this.root.name = "companion-lots";
+    this.scene.add(this.root);
+    this.meshes = [];
+    this.selected = null;
+  }
+
+  sync(companions, locate) {
+    const list = companions || [];
+    while (this.meshes.length < list.length) {
+      const mesh = makeCompanionMesh(this.meshes.length);
+      this.root.add(mesh);
+      this.meshes.push(mesh);
+    }
+    this.meshes.forEach((mesh, index) => {
+      const lot = list[index];
+      mesh.visible = !!lot;
+      if (!lot) return;
+      mesh.userData.lotId = lot.id;
+      mesh.traverse((obj) => {
+        obj.userData.lotId = lot.id;
+      });
+      const pos = locate ? locate(lot.tool, lot.slot ?? index) : { x: 0, y: 1, z: 0 };
+      if (!mesh.userData.placed) {
+        mesh.position.set(pos.x, pos.y, pos.z);
+        mesh.userData.placed = true;
+      }
+      mesh.userData.goal = pos;
+      const on = this.selected === lot.id;
+      mesh.scale.setScalar(on ? 1.35 : 1);
+      if (mesh.userData.die?.material) mesh.userData.die.material.emissiveIntensity = on ? 0.85 : 0.22;
+    });
+  }
+
+  setSelected(id) {
+    this.selected = id || null;
+    for (const mesh of this.meshes) {
+      const on = !!this.selected && mesh.userData.lotId === this.selected && mesh.visible;
+      mesh.scale.setScalar(on ? 1.35 : 1);
+      if (mesh.userData.die?.material) mesh.userData.die.material.emissiveIntensity = on ? 0.85 : 0.22;
+    }
+  }
+
+  pose(dt) {
+    const k = Math.min(1, (dt || 0) * 1.8);
+    for (const mesh of this.meshes) {
+      const goal = mesh.userData.goal;
+      if (!mesh.visible || !goal) continue;
+      mesh.position.x += (goal.x - mesh.position.x) * k;
+      mesh.position.y += (goal.y - mesh.position.y) * k;
+      mesh.position.z += (goal.z - mesh.position.z) * k;
+    }
+  }
+
+  pick(raycaster) {
+    const visible = this.meshes.filter((mesh) => mesh.visible);
+    if (!visible.length) return null;
+    const hits = raycaster.intersectObjects(visible, true);
+    if (!hits.length) return null;
+    let obj = hits[0].object;
+    while (obj && !obj.userData.lotId && obj.parent) obj = obj.parent;
+    return obj?.userData.lotId || null;
+  }
+
+  worldPoint(id, target) {
+    const mesh = this.meshes.find((item) => item.visible && item.userData.lotId === id);
+    if (!mesh) return null;
+    return mesh.getWorldPosition(target);
   }
 }

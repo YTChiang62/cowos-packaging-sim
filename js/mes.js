@@ -1,5 +1,6 @@
 import { committedMorphOf, productById } from "./catalog.js";
 import { Facility } from "./facility.js";
+import { scenarioApplies } from "./scenario.js";
 import {
   HOLD_AT,
   PUTAWAY,
@@ -48,7 +49,7 @@ function makeLot(product) {
 }
 
 export class Session {
-  constructor({ intensity = "few", role = "MFG", productId = "HBX-100", awaitChoice = false } = {}) {
+  constructor({ intensity = "few", role = "MFG", productId = "HBX-100", awaitChoice = false, scenario = null } = {}) {
     this.product = productById(productId) || productById("HBX-100");
     this.flow = this.product.flow;
     this.intensity = intensity;
@@ -63,15 +64,20 @@ export class Session {
     this.busy = false;
     this.hold = null;
     this.holdsResolved = [];
-    this.plannedHolds = new Set(
-      planHolds(intensity).filter((id) => this.product.holds[id])
-    );
+    this.scenario = scenarioApplies(this.product, scenario) ? scenario : null;
+    const baseHolds = planHolds(intensity).filter((id) => this.product.holds[id]);
+    let planned = new Set(baseHolds);
+    if (this.scenario === "first" || this.scenario === "pause") planned = new Set();
+    if (this.scenario === "kgd") planned = new Set(["kgd"]);
+    if (this.scenario === "overlay") planned = new Set(["overlay"]);
+    if (this.scenario === "warpage") planned = new Set(["warpage"]);
+    this.plannedHolds = planned;
     this.firedHolds = new Set();
     this.lot = makeLot(this.product);
     this.facility = new Facility({
       lot: this.lot,
       kgdLocked: this.plannedHolds.has("kgd"),
-      mode: "AUTO",
+      mode: this.scenario === "pause" ? "PAUSE" : "AUTO",
       rules: this.product.rules,
       kgdQty: this.product.kgdQty,
     });
@@ -82,6 +88,46 @@ export class Session {
     this._awaitingTransport = false;
     this._chain = false;
     this.processProgress = 0;
+    if (this.scenario === "kgd") this._seedKgdHold();
+    if (this.scenario === "overlay" || this.scenario === "warpage") this._seedScenarioHold(this.scenario);
+  }
+
+  /**
+   * Park the lot on diebank with the warehouse already refusing KGD.
+   * Uses the same approach refusal the live line uses.
+   */
+  _seedKgdHold() {
+    const idx = this.flow.findIndex((step) => step.id === "diebank");
+    if (idx < 0) return;
+    this.stepIndex = idx;
+    this.beatIndex = BEATS.indexOf("transport");
+    const approach = this.facility.beginApproach("diebank");
+    if (!approach.ok && approach.hold === "kgd") {
+      this.firedHolds.add("diebank");
+      this._openHold("kgd");
+    }
+  }
+
+  /**
+   * Walk the existing session until the named hold opens.
+   * runChoice is restored so a catalog lot can still ask auto vs step.
+   */
+  _seedScenarioHold(id) {
+    if (!this.flow.some((step) => step.id === id)) return;
+    const restore = this.runChoice;
+    this.runChoice = "step";
+    this.auto = false;
+    let guard = 0;
+    while (guard < 200000 && this.hold?.id !== id && this.status !== "DONE") {
+      guard += 1;
+      if (this.hold) break;
+      if (!this.busy && !this._awaitingTransport) {
+        if (!this.advance()) break;
+      }
+      this.tick(0.5);
+    }
+    this.auto = false;
+    this.runChoice = restore;
   }
 
   on(evt, fn) {
