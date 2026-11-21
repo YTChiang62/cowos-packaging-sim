@@ -10,7 +10,7 @@ import { buildAvatar, poseAvatar, setAvatarRole } from "./avatar.js";
 import { FACILITY_ROOMS, OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, RETURN_AIR, WalkController } from "./walk.js";
 import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 import { buildFacilityShell, makeBillboard, makeFlatTag } from "./shell.js";
-import { OpsView } from "./ops-view.js";
+import { CompanionLayer, OpsView } from "./ops-view.js";
 
 const BAYS = [
   { id: "incoming", x: -36.75, z: -18, w: 16, d: 12 },
@@ -177,6 +177,8 @@ export class Plant {
     this.opsFocus = null;
     this._opsSnapshot = null;
     this._opsLayers = null;
+    this.selectedLotId = null;
+    this._followVec = new THREE.Vector3();
 
     this._buildWorld();
     this._buildBays();
@@ -688,6 +690,7 @@ export class Plant {
       poseTool(this.tools.get(station.tool), motion(station.id, 0, 0), 0);
     }
     this.opsView = new OpsView(this.scene);
+    this.companions = new CompanionLayer(this.scene);
     this._publishOpsAnchors();
   }
 
@@ -707,8 +710,33 @@ export class Plant {
   setOps(snapshot, layers) {
     this._opsSnapshot = snapshot || null;
     this._opsLayers = layers || null;
-    if (!this.opsView) return;
-    this.opsView.sync(this._opsSnapshot, this._opsLayers, this.tFn);
+    if (this.opsView) this.opsView.sync(this._opsSnapshot, this._opsLayers, this.tFn);
+    const mates = snapshot?.companions || [];
+    this.companions?.sync(mates, (toolId, slot) => this._companionSpot(toolId, slot));
+    if (this.selectedLotId && !mates.some((lot) => lot.id === this.selectedLotId)) {
+      this.setSelectedLot(null);
+    }
+  }
+
+  _companionSpot(toolId, slot) {
+    const rec = this.tools.get(toolId);
+    if (!rec) return { x: 0, y: 1, z: 0 };
+    const p = this.loadportWorld(toolId);
+    const along = ((slot ?? 0) - 1.5) * 0.4;
+    const aisle = rec.face >= 0 ? 0.42 : -0.42;
+    return { x: p.x + along, y: p.y + 0.46, z: p.z + aisle };
+  }
+
+  setSelectedLot(id) {
+    this.selectedLotId = id || null;
+    this.companions?.setSelected(this.selectedLotId);
+  }
+
+  _followTarget() {
+    if (this.selectedLotId && this.companions?.worldPoint(this.selectedLotId, this._followVec)) {
+      return this._followVec;
+    }
+    return this.workpiece.group.getWorldPosition(this._followVec);
   }
 
   setOpsFocus(toolId) {
@@ -878,11 +906,21 @@ export class Plant {
     for (const rec of this.tools.values()) this.setToolStatus(rec.id, "idle");
   }
 
-  pick(clientX, clientY) {
+  _aimPointer(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
+  }
+
+  pickCompanion(clientX, clientY) {
+    if (!this.companions) return null;
+    this._aimPointer(clientX, clientY);
+    return this.companions.pick(this.raycaster);
+  }
+
+  pick(clientX, clientY) {
+    this._aimPointer(clientX, clientY);
     const hits = [...this.tools.values()].map((r) => r.hit);
     const found = this.raycaster.intersectObjects(hits, false)[0];
     return found?.object.userData.toolId || null;
@@ -1033,7 +1071,7 @@ export class Plant {
       this.camera.lookAt(this.controls.target);
       if (k >= 1) this._camTween = null;
     } else if (this.follow === "lot" || this.follow === true) {
-      const target = this.workpiece.group.getWorldPosition(new THREE.Vector3());
+      const target = this._followTarget();
       const desired = target.clone().add(new THREE.Vector3(6, 5.5, 7));
       this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
       this.controls.target.lerp(target, 1 - Math.pow(0.001, dt));
@@ -1094,6 +1132,7 @@ export class Plant {
       camY: this.camera.position.y,
       nearbyTool: this.walking ? this.walker.inspectId : this.opsFocus,
     });
+    this.companions?.pose(dt);
 
     this.renderer.render(this.scene, this.camera);
   }

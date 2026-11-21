@@ -1,7 +1,9 @@
 import { PRODUCTS } from "./catalog.js";
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
+import { buildKpiFromSession } from "./kpi.js";
 import { BEATS, STEPS } from "./mes.js";
 import { PORTS, STATIONS, recipeById } from "./route.js";
+import { afterActionFigures, buildAfterAction, scenariosForProduct } from "./scenario.js";
 
 
 export function bindUI() {
@@ -77,7 +79,7 @@ function paintProduct(lang, session) {
   hdr.textContent = session ? t(lang, session.product.nameKey) : t(lang, "hdrNoLot");
 }
 
-export function renderCatalog(lang, { selectedId = null, briefing = false } = {}) {
+export function renderCatalog(lang, { selectedId = null, briefing = false, scenario = "first" } = {}) {
   const list = document.getElementById("catalog-list");
   const brief = document.getElementById("catalog-brief");
   if (!list || !brief) return;
@@ -185,6 +187,7 @@ export function renderCatalog(lang, { selectedId = null, briefing = false } = {}
   note.className = "help-hint";
   note.textContent = product.skippedTools.length ? t(lang, "unusedNote") : "";
   brief.append(back, kicker, title, story, facts, matLabel, mats, bayLabel, bays, stepLabel, steps, note);
+  renderScenarioChoices(lang, product, scenario);
 }
 
 export function renderLot(lang, session, snap, els) {
@@ -561,7 +564,63 @@ export function renderOps(lang, snapshot) {
   card.hidden = false;
 }
 
-export function showDone(lang, session, els) {
+export function renderKpi(lang, kpi) {
+  const card = document.getElementById("kpi-card");
+  const cycle = document.getElementById("kpi-cycle");
+  const throughput = document.getElementById("kpi-throughput");
+  const availability = document.getElementById("kpi-availability");
+  if (!cycle || !throughput || !availability) return;
+  if (card) card.hidden = !kpi;
+  if (!kpi) {
+    cycle.textContent = "—";
+    throughput.textContent = "—";
+    availability.textContent = "—";
+    return;
+  }
+  cycle.textContent = t(lang, "kpiCycleValue", { n: kpi.cycleMin });
+  throughput.textContent = t(lang, "kpiThroughputValue", { n: kpi.throughput });
+  availability.textContent = t(lang, "kpiAvailabilityValue", { n: kpi.availability });
+}
+
+export function renderCompanions(lang, companions, selectedId) {
+  const list = document.getElementById("companion-list");
+  if (!list) return;
+  list.replaceChildren();
+  const hero = document.createElement("button");
+  hero.type = "button";
+  hero.className = "companion-chip";
+  hero.dataset.lot = "";
+  hero.textContent = t(lang, "companionHero");
+  hero.setAttribute("aria-pressed", String(!selectedId));
+  list.append(hero);
+  for (const lot of companions || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "companion-chip";
+    btn.dataset.lot = lot.id;
+    btn.textContent = `${lot.id} · ${lot.tool}`;
+    btn.setAttribute("aria-pressed", String(selectedId === lot.id));
+    list.append(btn);
+  }
+}
+
+export function renderScenarioChoices(lang, product, selected) {
+  const row = document.getElementById("scenario-row");
+  if (!row) return;
+  const options = scenariosForProduct(product);
+  row.replaceChildren();
+  for (const id of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "choice";
+    btn.dataset.scenario = id;
+    btn.textContent = t(lang, `scenario_${id}`);
+    btn.setAttribute("aria-pressed", String(id === selected));
+    row.append(btn);
+  }
+}
+
+export function showDone(lang, session, els, elapsed = 0) {
   const lot = session.lot;
   els.doneLayer.hidden = false;
   els.doneSummary.textContent = t(lang, "doneSummary", {
@@ -571,4 +630,19 @@ export function showDone(lang, session, els) {
     holds: session.holdsResolved.length,
     sn: lot.unit,
   });
+  const happened = document.getElementById("aar-happened");
+  const guidance = document.getElementById("aar-guidance");
+  const stats = document.getElementById("aar-stats");
+  if (!happened || !guidance || !stats) return;
+  const selected = null;
+  const review = buildAfterAction(session, buildKpiFromSession(session, elapsed, selected));
+  happened.textContent = t(lang, review.happenedKey);
+  guidance.textContent = t(lang, review.guidanceKey);
+  stats.replaceChildren();
+  for (const item of afterActionFigures(review)) {
+    const pill = document.createElement("span");
+    pill.className = "ops-stat";
+    pill.textContent = t(lang, item.key, { n: item.n });
+    stats.append(pill);
+  }
 }

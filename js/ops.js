@@ -1,8 +1,9 @@
 /**
  * Simulated shop-floor snapshot for the APEX-3D trainer.
  * Pure data: no DOM and no Three.js. The hero lot still lives in js/mes.js.
- * Companion lots exist only here, so the overview can show load, alarms, and
- * queues without adding product meshes or a sixth bay.
+ * Companion lots are derived here so the overview, the chips, and the small
+ * product meshes stay on the same tools. They are not a second state machine
+ * and they do not take a crane job.
  *
  * Bottleneck severity, highest first:
  *   open hold, longest queue (a KGD shortage on that queue is material),
@@ -437,6 +438,7 @@ export function buildOpsSnapshot(input) {
   const bays = BAY_IDS.map((id) => scoreBay(id, tools));
   const bottleneck = selectBottleneck(tools, bays, state);
   const chips = [...bays.map(chipFromBay), ...tools.map(chipFromTool)];
+  const companions = placeCompanions(state, tools);
   return {
     elapsedBucket: bucketOf(state.elapsed),
     intensity: state.intensity,
@@ -447,7 +449,70 @@ export function buildOpsSnapshot(input) {
     bays,
     chips,
     bottleneck,
+    companions,
   };
+}
+
+/** few stays at 2 visible lots; many raises the floor to 4. none matches few. */
+export function companionCount(intensity) {
+  return intensity === "many" ? 4 : 2;
+}
+
+const COMPANION_IDS = ["APX-C01", "APX-C02", "APX-C03", "APX-C04"];
+
+function placeCompanions(state, tools) {
+  const n = companionCount(state.intensity);
+  const hero = tools.find((tool) => tool.id === state.tool) || tools.find((tool) => tool.current) || null;
+  const holdIndex = state.hold?.stationId
+    ? (tools.find((tool) => tool.stationId === state.hold.stationId)?.index ?? null)
+    : null;
+  const allowed = (tool) => holdIndex == null || tool.index <= holdIndex;
+  let pool = tools.filter((tool) => allowed(tool) && tool.queue > 0 && tool.id !== hero?.id);
+  pool.sort((a, b) => b.queue - a.queue || a.index - b.index);
+  if (pool.length < n) {
+    const rest = tools.filter((tool) => allowed(tool) && tool.id !== hero?.id && !pool.includes(tool));
+    rest.sort((a, b) => b.queue - a.queue || a.index - b.index);
+    pool = pool.concat(rest);
+  }
+  if (pool.length < n && holdIndex != null) {
+    const held = tools.find((tool) => tool.index === holdIndex);
+    if (held) {
+      while (pool.length < n) pool.push(held);
+    }
+  }
+  if (pool.length < n) {
+    const fallback = tools.filter((tool) => tool.id !== hero?.id);
+    let i = 0;
+    while (pool.length < n && fallback.length) {
+      pool.push(fallback[i % fallback.length]);
+      i += 1;
+    }
+  }
+  return pool.slice(0, n).map((tool, index) => ({
+    id: COMPANION_IDS[index],
+    tool: tool.id,
+    stationId: tool.stationId,
+    bay: tool.bay,
+    index: tool.index,
+    queue: tool.queue,
+    busy: !!tool.busy,
+    alarm: !!tool.alarm,
+    pose: tool.alarm || tool.queue > 0 ? "queue" : "dock",
+    moving: false,
+    slot: index,
+  }));
+}
+
+export function buildCompanions(input) {
+  if (input && Array.isArray(input.companions) && input.bottleneck && Array.isArray(input.tools)) {
+    return input.companions;
+  }
+  return buildOpsSnapshot(input).companions;
+}
+
+export function selectCompanion(companions, id) {
+  if (!id || !Array.isArray(companions)) return null;
+  return companions.find((lot) => lot.id === id) || null;
 }
 
 /** Which parts of a chip the layer toggles actually draw. */

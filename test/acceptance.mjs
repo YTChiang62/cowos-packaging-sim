@@ -50,15 +50,20 @@ import { productById } from "../js/catalog.js";
 import {
   HUD_PANELS,
   HUD_STORAGE_KEY,
+  applyPreset,
   defaultHudState,
   dragStartsOnChrome,
   hidePanel,
   movePanel,
+  presetCamera,
   readHud,
   showPanel,
   toggleFocus,
   writeHud,
 } from "../js/hud.js";
+import { buildKpi, buildKpiFromSession } from "../js/kpi.js";
+import { afterActionFigures, buildAfterAction, scenariosForProduct } from "../js/scenario.js";
+import { V11_COPY_KEYS } from "../js/v11-i18n.js";
 import { hasOwnCopy, t } from "../js/i18n.js";
 import {
   LOAD_THRESHOLD,
@@ -66,10 +71,12 @@ import {
   OPS_LAYER_STORAGE_KEY,
   QUEUE_THRESHOLD,
   SEVERITY,
+  buildCompanions,
   buildOpsSnapshot,
   defaultLayers,
   presentChip,
   readLayers,
+  selectCompanion,
   visibleChips,
   writeLayers,
 } from "../js/ops.js";
@@ -1536,6 +1543,361 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
       tucked.panels["ops-layers"].hidden === true &&
       showPanel(showPanel(tucked, "ops-card"), "ops-layers").panels["ops-layers"].hidden === false
   );
+}
+
+{
+  const quietKpi = buildKpi({
+    stepIndex: 0,
+    flowLength: 21,
+    status: "QUEUE",
+    elapsed: 1,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: quiet.tools,
+  });
+  const quietSame = buildKpi({
+    stepIndex: 0,
+    flowLength: 21,
+    status: "QUEUE",
+    elapsed: 5,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: quiet.tools,
+  });
+  const quietLater = buildKpi({
+    stepIndex: 0,
+    flowLength: 21,
+    status: "QUEUE",
+    elapsed: 8,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: quiet.tools,
+  });
+  check(
+    "kpi values stay inside one elapsed bucket",
+    quietKpi.bucket === quietSame.bucket &&
+      quietKpi.cycleMin === quietSame.cycleMin &&
+      quietKpi.throughput === quietSame.throughput &&
+      quietKpi.availability === quietSame.availability
+  );
+  check("a later kpi bucket can move cycle time", quietLater.bucket > quietKpi.bucket && quietLater.cycleMin > quietKpi.cycleMin);
+  const steppedKpi = buildKpi({
+    stepIndex: 4,
+    flowLength: 21,
+    status: "RUN",
+    elapsed: 0,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: [],
+  });
+  const startKpi = buildKpi({
+    stepIndex: 0,
+    flowLength: 21,
+    status: "QUEUE",
+    elapsed: 0,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: [],
+  });
+  check("cycle time follows the hero step", steppedKpi.cycleMin === startKpi.cycleMin + 72);
+  const clearLine = buildOpsSnapshot({
+    intensity: "none",
+    stepIndex: 5,
+    tool: "MET-23",
+    stepId: "overlay",
+    status: "RUN",
+    busy: true,
+    craneMode: "AUTO",
+    elapsed: 1,
+  });
+  const heldLine = buildOpsSnapshot({
+    intensity: "none",
+    stepIndex: 5,
+    tool: "MET-23",
+    stepId: "overlay",
+    status: "HOLD",
+    hold: { id: "overlay", stationId: "overlay" },
+    craneMode: "AUTO",
+    elapsed: 1,
+  });
+  const clearKpi = buildKpi({
+    stepIndex: 5,
+    flowLength: 21,
+    status: "RUN",
+    elapsed: 1,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: clearLine.tools,
+  });
+  const holdKpi = buildKpi({
+    stepIndex: 5,
+    flowLength: 21,
+    status: "HOLD",
+    hold: { id: "overlay" },
+    elapsed: 1,
+    intensity: "none",
+    craneMode: "AUTO",
+    tools: heldLine.tools,
+  });
+  const pauseKpi = buildKpi({
+    stepIndex: 5,
+    flowLength: 21,
+    status: "RUN",
+    elapsed: 1,
+    intensity: "none",
+    craneMode: "PAUSE",
+    tools: clearLine.tools,
+  });
+  check(
+    "an open hold lowers availability and throughput and adds hold dwell",
+    holdKpi.availability < clearKpi.availability &&
+      holdKpi.throughput < clearKpi.throughput &&
+      holdKpi.cycleMin === clearKpi.cycleMin + 6
+  );
+  check(
+    "a crane pause lowers availability and throughput without inventing a new cycle",
+    pauseKpi.availability < clearKpi.availability &&
+      pauseKpi.throughput < clearKpi.throughput &&
+      pauseKpi.cycleMin === clearKpi.cycleMin
+  );
+  const heroKpi = new Session({ scenario: "first", intensity: "none" });
+  const heroBefore = buildKpiFromSession(heroKpi, 2);
+  heroKpi.facility.setMode("PAUSE");
+  const heroPaused = buildKpiFromSession(heroKpi, 2);
+  check(
+    "kpi from the hero session follows a crane pause",
+    heroPaused.availability < heroBefore.availability && heroPaused.throughput < heroBefore.throughput
+  );
+}
+
+{
+  const fewMates = buildCompanions({ intensity: "few", stepIndex: 0, elapsed: 0, craneMode: "AUTO" });
+  const manyMates = buildCompanions({ intensity: "many", stepIndex: 0, elapsed: 0, craneMode: "AUTO" });
+  const noneMates = buildCompanions({ intensity: "none", stepIndex: 0, elapsed: 0, craneMode: "AUTO" });
+  check(
+    "companion lots stay between 2 and 4",
+    fewMates.length === 2 && noneMates.length === 2 && manyMates.length === 4 &&
+      [fewMates, manyMates, noneMates].every((list) => list.length >= 2 && list.length <= 4)
+  );
+  const picked = selectCompanion(manyMates, manyMates[1].id);
+  check("a companion lot can be selected", picked?.id === manyMates[1].id && picked.tool === manyMates[1].tool && selectCompanion(manyMates, "missing") == null);
+  const earlyMates = buildCompanions({ intensity: "few", stepIndex: 1, elapsed: 1 });
+  const sameMates = buildCompanions({ intensity: "few", stepIndex: 1, elapsed: 5 });
+  check(
+    "companion placement stays put inside one time bucket",
+    earlyMates.map((lot) => `${lot.id}:${lot.tool}`).join(",") === sameMates.map((lot) => `${lot.id}:${lot.tool}`).join(",")
+  );
+  const queued = buildOpsSnapshot({ intensity: "few", stepIndex: 0, elapsed: 0, craneMode: "AUTO" });
+  check(
+    "companion lots sit on tools the ops snapshot already marks",
+    queued.companions.every((lot) => {
+      const tool = queued.tools.find((item) => item.id === lot.tool);
+      return !!tool && lot.moving === false && (tool.queue > 0 || tool.busy || lot.pose === "dock");
+    })
+  );
+  const heldMates = buildOpsSnapshot({
+    intensity: "many",
+    stepIndex: 5,
+    tool: "MET-23",
+    stepId: "overlay",
+    status: "HOLD",
+    hold: { id: "overlay", stationId: "overlay" },
+    craneMode: "AUTO",
+    elapsed: 0,
+  });
+  const overlayIndex = heldMates.tools.find((tool) => tool.id === "MET-23").index;
+  check(
+    "companions do not pass an open hold",
+    heldMates.tools.find((tool) => tool.id === "MET-23").alarm === true &&
+      heldMates.companions.length === 4 &&
+      heldMates.companions.every((lot) => lot.index <= overlayIndex && lot.moving === false)
+  );
+  const pausedMates = buildCompanions({ intensity: "few", stepIndex: 0, craneMode: "PAUSE", elapsed: 0 });
+  check("a crane pause does not send companion lots moving", pausedMates.every((lot) => lot.moving === false));
+}
+
+{
+  const hbx = scenariosForProduct(productById("HBX-100"));
+  const s12opts = scenariosForProduct(productById("HBX-S12"));
+  check(
+    "HBX-100 offers the five training scenarios",
+    hbx.join(",") === "first,kgd,overlay,warpage,pause"
+  );
+  check(
+    "HBX-S12 hides bond offset and keeps the scenarios it can run",
+    !s12opts.includes("overlay") &&
+      s12opts.includes("first") &&
+      s12opts.includes("kgd") &&
+      s12opts.includes("warpage") &&
+      s12opts.includes("pause")
+  );
+  const ignored = new Session({ productId: "HBX-S12", scenario: "overlay", intensity: "none" });
+  check("an inapplicable bond-offset scenario does not open that hold", ignored.scenario == null && ignored.hold == null && ignored.stepIndex === 0);
+  const first = new Session({ scenario: "first", intensity: "many" });
+  check(
+    "first-lot scenario starts clean with auto dispatch",
+    first.hold == null &&
+      first.plannedHolds.size === 0 &&
+      first.facility.mode === "AUTO" &&
+      first.stepIndex === 0 &&
+      first.facility.wh.carriers.filter((c) => c.sku === "kgd").every((c) => c.status === "stock" && c.qty > 0)
+  );
+  const claims = first.facility.amhs.claimCount;
+  buildCompanions(first);
+  check("companion lots do not claim the hero crane", first.facility.amhs.claimCount === claims);
+  const kgdStart = new Session({ scenario: "kgd", intensity: "none" });
+  check(
+    "KGD scenario starts on a locked die bank",
+    kgdStart.hold?.id === "kgd" &&
+      kgdStart.step().id === "diebank" &&
+      kgdStart.step().tool === "DBK-02" &&
+      kgdStart.morph === "bank" &&
+      kgdStart.facility.wh.carriers.filter((c) => c.sku === "kgd").every((c) => c.status === "locked" || !(c.qty > 0))
+  );
+  const bondStart = new Session({ scenario: "overlay", intensity: "none", role: "PE" });
+  check(
+    "bond-offset scenario starts held at MET-23",
+    bondStart.hold?.id === "overlay" &&
+      bondStart.step().tool === "MET-23" &&
+      bondStart.morph === "bonded" &&
+      bondStart.facility.holdTool === "MET-23" &&
+      bondStart.facility.agreementErrors().length === 0
+  );
+  check("bond-offset scenario uses the existing hold actions", bondStart.resolve("release").ok === true && bondStart.hold == null);
+  const bondReview = buildAfterAction(bondStart, buildKpiFromSession(bondStart, 6));
+  check(
+    "a resolved scenario hold is what the after-action reports",
+    bondReview.guidanceKey === "aarDid_overlay" &&
+      bondReview.holds === 1 &&
+      afterActionFigures(bondReview).length === 3
+  );
+  const warpStart = new Session({ scenario: "warpage", intensity: "none" });
+  check(
+    "warpage scenario starts held at MET-07",
+    warpStart.hold?.id === "warpage" && warpStart.step().tool === "MET-07" && warpStart.facility.holdTool === "MET-07"
+  );
+  const pauseStart = new Session({ scenario: "pause", intensity: "none" });
+  const pauseView = buildOpsSnapshot(pauseStart);
+  check(
+    "crane-pause scenario starts paused and does not alarm a process tool",
+    pauseStart.facility.mode === "PAUSE" &&
+      pauseStart.hold == null &&
+      pauseStart.stepIndex === 0 &&
+      pauseStart.plannedHolds.size === 0 &&
+      pauseView.bottleneck.kind === "pause" &&
+      pauseView.craneMode === "PAUSE" &&
+      pauseView.tools.every((tool) => tool.alarm === false)
+  );
+  const finished = new Session({ productId: "HBX-S12", scenario: "first", intensity: "none" });
+  finished.chooseRun("auto");
+  pump(finished);
+  const review = buildAfterAction(finished, buildKpiFromSession(finished, 40));
+  const figures = afterActionFigures(review);
+  check(
+    "after-action appears when the lot completes",
+    finished.status === "DONE" &&
+      review.happenedKey === "aarHappened_first" &&
+      review.guidanceKey === "aarShould_first" &&
+      figures.length === 3 &&
+      figures.map((item) => item.key).join(",") === "aarCycle,aarHolds,aarAvail"
+  );
+  check(
+    "after-action copy exists in all three languages",
+    ["zh-TW", "zh-CN", "en"].every((lang) => t(lang, review.happenedKey) !== review.happenedKey && t(lang, figures[0].key, { n: figures[0].n }).includes(String(figures[0].n)))
+  );
+}
+
+{
+  const follow = applyPreset(defaultHudState(), "follow");
+  check(
+    "follow preset shows the lot dock, tool dock, and compact kpi",
+    follow.preset === "follow" &&
+      follow.panels["lot-dock"].hidden === false &&
+      follow.panels["tool-dock"].hidden === false &&
+      follow.panels["kpi-card"].hidden === false &&
+      follow.panels["ops-card"].hidden === false &&
+      follow.panels["facility-dock"].hidden === true &&
+      follow.panels["ops-layers"].hidden === true
+  );
+  const walkPreset = applyPreset(follow, "walk");
+  check(
+    "walk preset tucks the large docks and does not enter walk",
+    walkPreset.preset === "walk" &&
+      presetCamera("walk") === "keep" &&
+      walkPreset.panels["lot-dock"].hidden === true &&
+      walkPreset.panels["facility-dock"].hidden === true &&
+      walkPreset.panels["tool-dock"].hidden === true &&
+      walkPreset.panels["kpi-card"].hidden === true &&
+      walkPreset.panels["ops-card"].hidden === true &&
+      walkPreset.panels["stage-rail"].hidden === true
+  );
+  const overview = applyPreset(walkPreset, "overview");
+  check(
+    "overview preset keeps the tucked docks and shows kpi, ops, and layers",
+    overview.preset === "overview" &&
+      presetCamera("overview") === "overview" &&
+      presetCamera("follow") === "lot" &&
+      overview.panels["lot-dock"].hidden === true &&
+      overview.panels["facility-dock"].hidden === true &&
+      overview.panels["kpi-card"].hidden === false &&
+      overview.panels["ops-card"].hidden === false &&
+      overview.panels["ops-layers"].hidden === false
+  );
+  const presetStore = memStore();
+  writeHud(follow, presetStore);
+  const loadedPreset = readHud(presetStore);
+  check(
+    "the last hud preset persists in the hud store",
+    loadedPreset.preset === "follow" && loadedPreset.panels["lot-dock"].hidden === false && presetStore.getItem(HUD_STORAGE_KEY)
+  );
+  const solidsBefore = buildSolids().length;
+  applyPreset(defaultHudState(), "walk");
+  check("a hud preset does not add a walk solid", buildSolids().length === solidsBefore && buildSolids().every((solid) => solid.kind !== "hud"));
+}
+
+for (const lang of ["zh-TW", "zh-CN", "en"]) {
+  for (const key of V11_COPY_KEYS) {
+    check(`${lang} has v11 copy ${key}`, hasOwnCopy(lang, key));
+  }
+}
+check(
+  "preset names stay 廠長總覽 / 跟批作業 / 步行巡線",
+  t("zh-TW", "presetOverview") === "廠長總覽" &&
+    t("zh-TW", "presetFollow") === "跟批作業" &&
+    t("zh-TW", "presetWalk") === "步行巡線" &&
+    t("zh-CN", "presetOverview") === "厂长总览" &&
+    t("zh-CN", "presetFollow") === "跟批作业" &&
+    t("zh-CN", "presetWalk") === "步行巡线" &&
+    t("en", "presetOverview") === "Plant overview" &&
+    t("en", "presetFollow") === "Follow lot" &&
+    t("en", "presetWalk") === "Walk"
+);
+check(
+  "scenario names keep 键合偏移 and 翘曲 in simplified Chinese",
+  t("zh-CN", "scenario_overlay") === "键合偏移" &&
+    t("zh-CN", "scenario_warpage") === "翘曲" &&
+    t("zh-TW", "scenario_overlay") === "鍵合偏移" &&
+    t("en", "scenario_overlay") === "Bond offset"
+);
+{
+  const page = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const uiSrc = readFileSync(new URL("../js/ui.js", import.meta.url), "utf8");
+  const freshCopy = ["../js/v11-i18n.js", "../js/i18n.js", "../js/main.js", "../index.html"]
+    .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
+    .join("\n");
+  check(
+    "the shift card, presets, scenarios, and after-action are on the page",
+    page.includes('id="kpi-card"') &&
+      page.includes('id="preset-dock"') &&
+      page.includes('data-preset="overview"') &&
+      page.includes('data-preset="follow"') &&
+      page.includes('data-preset="walk"') &&
+      page.includes('id="scenario-row"') &&
+      page.includes('id="aar-happened"') &&
+      page.includes('id="aar-stats"')
+  );
+  check("completion builds the after-action from the existing done sheet", uiSrc.includes("buildAfterAction") && uiSrc.includes("afterActionFigures"));
+  check("crane labels were not rewritten", !freshCopy.includes("手勘"));
 }
 
 if (failed) {

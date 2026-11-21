@@ -1,5 +1,6 @@
 import { FLOW_COPY } from "./flow-i18n.js";
 import { V10_COPY } from "./v10-i18n.js";
+import { V11_COPY } from "./v11-i18n.js";
 
 export const LANGS = ["zh-TW", "zh-CN", "en"];
 export const LANG_LABEL = { "zh-TW": "繁", "zh-CN": "简", en: "EN" };
@@ -816,6 +817,7 @@ const dict = {
 
 for (const lang of Object.keys(FLOW_COPY)) Object.assign(dict[lang], FLOW_COPY[lang]);
 for (const lang of Object.keys(V10_COPY)) Object.assign(dict[lang], V10_COPY[lang]);
+for (const lang of Object.keys(V11_COPY)) Object.assign(dict[lang], V11_COPY[lang]);
 
 export function hasOwnCopy(lang, key) {
   const table = dict[lang];
