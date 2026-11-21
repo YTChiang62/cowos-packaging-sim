@@ -424,14 +424,39 @@ body.theme-neutral #grain { opacity: 0.035; }
   right: 348px;
   bottom: 28px;
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  padding: 6px 8px 8px;
+  border-radius: 14px;
+  max-height: 148px;
+  overflow: auto;
+  z-index: 5;
+}
+.flow-mods,
+.flow-stages,
+.flow-steps {
+  display: flex;
   flex-wrap: wrap;
   gap: 3px 4px;
   align-items: center;
-  padding: 5px 8px;
-  border-radius: 14px;
-  max-height: 96px;
-  overflow: auto;
-  z-index: 5;
+}
+.flow-mod,
+.flow-stage {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.flow-mod { font-size: 11px; padding: 3px 8px; }
+.flow-stage { font-size: 10px; padding: 2px 7px; color: var(--copper-2); }
+.flow-mod.is-current,
+.flow-stage.is-current {
+  background: rgba(211, 146, 90, 0.16);
+  color: var(--ice);
 }
 .flow-bay {
   flex: none;
@@ -1246,9 +1271,9 @@ body.theme-neutral #grain { opacity: 0.035; }
 }
 #stage-flow {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px 4px;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
   width: 100%;
 }
 .stage-rail { padding-top: 22px; }

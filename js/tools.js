@@ -34,6 +34,37 @@ const ACCENT = {
   handler: 0x5ee0c8,
   marker: 0xff6b7a,
   packer: 0xd7c4a0,
+  pecvd: 0x7ec8e8,
+  litho: 0x9eb6ff,
+  drie: 0xc084f0,
+  pvd: 0xe0b070,
+  plate: 0xd7a15a,
+  cmp: 0x8ec8d8,
+  xray: 0xd0d8e8,
+  tcb: 0x3ee0c0,
+  mold: 0xc47a4a,
+  csam: 0x7ec8c0,
+  burnin: 0xe08a4a,
+  ate: 0x5ee0c8,
+  dummy: 0xb0a0c8,
+  probe: 0xd7a36a,
+};
+
+const VISUAL_FAMILY = {
+  pecvd: "plasma",
+  litho: "inspect",
+  drie: "plasma",
+  pvd: "plasma",
+  plate: "clean",
+  cmp: "grinder",
+  xray: "metrology",
+  tcb: "bonder",
+  mold: "oven",
+  csam: "metrology",
+  burnin: "oven",
+  ate: "handler",
+  dummy: "plasma",
+  probe: "diebank",
 };
 
 const OVEN_GLOW = {
@@ -436,8 +467,8 @@ export function buildTool(station) {
   group.rotation.y = station.place.face > 0 ? 0 : Math.PI;
   group.userData.toolId = station.tool;
 
-  const kind = station.kind;
-  const accentHex = ACCENT[kind] || 0xd3925a;
+  const kind = VISUAL_FAMILY[station.kind] || station.kind;
+  const accentHex = ACCENT[station.kind] || ACCENT[kind] || 0xd3925a;
   const accent = mat(accentHex, { emissive: accentHex, emissiveIntensity: 0.16, roughness: 0.35, metalness: 0.45 });
 
   box(group, 2.7, 0.2, 2.35, DARK, 0, 0.1, -0.08);
@@ -632,6 +663,24 @@ export function buildTool(station) {
   }
 
   dressTool(group, chuck, parts, station);
+  const cap = mat(accentHex, { emissive: accentHex, emissiveIntensity: 0.35, roughness: 0.3, metalness: 0.4 });
+  if (station.kind === "drie" || station.kind === "pecvd" || station.kind === "pvd") {
+    cyl(group, 0.22, 0.28, 0.7, cap, 0.72, 1.55, -0.35, 16);
+  } else if (station.kind === "litho") {
+    cyl(group, 0.16, 0.08, 0.42, cap, 0, 1.7, -0.2, 12);
+  } else if (station.kind === "plate" || station.kind === "cmp") {
+    box(group, 0.7, 0.12, 0.28, cap, 0, 1.45, -0.45);
+  } else if (station.kind === "tcb") {
+    box(group, 0.36, 0.16, 0.36, cap, 0, 1.55, -0.15);
+  } else if (station.kind === "mold") {
+    box(group, 0.9, 0.18, 0.7, cap, 0, 1.55, -0.2);
+  } else if (station.kind === "csam" || station.kind === "xray") {
+    cyl(group, 0.2, 0.2, 0.16, cap, 0.4, 1.7, -0.25, 16);
+  } else if (station.kind === "burnin") {
+    for (let i = 0; i < 3; i += 1) box(group, 0.7, 0.04, 0.4, cap, -0.2, 0.7 + i * 0.28, -0.4);
+  } else if (station.kind === "dummy" || station.kind === "probe") {
+    box(group, 0.28, 0.4, 0.2, cap, 0.85, 1.2, -0.2);
+  }
   serviceKit(group);
 
   const lights = stackLight(group, 1.18, 0.22, 0.9);

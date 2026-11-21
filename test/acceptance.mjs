@@ -2,7 +2,6 @@
  * Contract and morphology checks that do not need WebGL.
  * Run: node --experimental-detect-module test/acceptance.mjs
  */
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { BEATS, Session } from "../js/mes.js";
 import {
@@ -104,25 +103,18 @@ const contractErrors = assertContract();
 check("frozen contract has no structural errors", contractErrors.length === 0);
 if (contractErrors.length) console.error(contractErrors.join("\n"));
 
-const ORDER = [
-  "iqc", "diebank", "plasma", "hbond", "anneal", "overlay", "backgrind",
-  "mount", "dice", "diceaoi", "subbake", "wos", "underfill", "ufcure", "warpage",
-  "ball", "reflow", "fluxclean", "ftest", "mark", "pack",
-];
-check("flow has 21 operations in order", FLOW.map((s) => s.id).join(",") === ORDER.join(","));
-const RECIPE_IDS = [
-  "IQC-INSP-01", "KGD-ISSUE-01", "PLASMA-COW-01", "HBOND-COW-02", "ANNEAL-COW-01",
-  "MET-OVL-01", "BG-COW-01", "MOUNT-01", "DICE-COW-01", "AOI-DICE-01",
-  "BAKE-SUB-01", "WOS-ATTACH-01", "UF-DISP-01", "UF-CURE-01", "MET-WRP-01",
-  "BALL-ATT-01", "REFLOW-BGA-01", "FLUX-CLN-01", "FT-HBX-01", "MARK-01", "PACK-TRAY-01",
-];
+check("HBX-100 is 5 modules, 18 stages, and 86 steps", FLOW.length === 86 && new Set(FLOW.map((s) => s.module)).size === 5 && new Set(FLOW.map((s) => s.stage)).size === 18);
 check(
-  "recipe ids are unchanged",
-  Object.keys(RECIPES).join(",") === RECIPE_IDS.join(",") && FLOW_ID === "HBX-100-COW-WOS"
+  "every numbered template step is on the flow and three compound lines are split",
+  FLOW_ID === "HBX-100-COWOS-S" &&
+    ["1.1.1", "1.4.2", "1.4.3", "1.4.8", "2.1.3", "3.2.4", "3.2.7", "4.1.2", "4.2.3", "5.1.1", "5.3.5"].every((code) => FLOW.some((s) => s.code === code)) &&
+    FLOW.filter((s) => s.code === "1.4.2").length === 2 &&
+    FLOW.filter((s) => s.code === "1.4.3").length === 2 &&
+    FLOW.filter((s) => s.code === "1.4.8").length === 2
 );
 check(
-  "morph chain is bank→issued→bonded→thinned→singulated→wos→underfilled→balled→packed",
-  MORPHS.join(",") === "bank,issued,bonded,thinned,singulated,wos,underfilled,balled,packed"
+  "morph chain follows the template boundaries",
+  MORPHS.join(",") === "bank,bumped,issued,bonded,cowfill,os,underfilled,balled,molded,marked,packed"
 );
 
 for (const step of FLOW) {
@@ -146,70 +138,62 @@ for (let i = 1; i < FLOW.length; i++) {
   check(`${cur} starts where ${prev} ended`, posesEqual(frame(cur, 0, 0), frame(prev, 1, 0)));
 }
 
-check("diebank t=0 is not yet issued", !posesEqual(frame("diebank", 0, 0), frame("diebank", 1, 0)));
-check("issued dies share a plane (not a stack)", (() => {
-  const p = frame("diebank", 1, 0);
+check("KGD issue starts bumped and ends with dice on one plane", (() => {
+  const start = frame("s213", 0, 0);
+  const done = frame("s213", 1, 0);
+  const ys = done.hbms.map((h) => h.y);
+  return start.dieOp < 0.05 && done.dieOp > 0.9 && done.wafer.op > 0.8 && Math.max(...ys) - Math.min(...ys) < 0.02;
+})());
+check("KGD shortage stays on the bumped interposer", posesEqual(frame("s213", 0.42, 1), frame("s213", 0, 0)) && frame("s213", 0.42, 1).dieOp < 0.05);
+
+check("TCB starts from issued KGD", posesEqual(frame("s324", 0, 0), frame("s323", 1, 0)));
+check("good TCB ends as a stack with a bond plane", (() => {
+  const p = frame("s324", 1, 0);
   const ys = p.hbms.map((h) => h.y);
-  return Math.max(...ys) - Math.min(...ys) < 0.02 && p.bond.op < 0.05 && p.logic.y < 0.35 && p.thin < 0.05;
+  return p.bond.op > 0.9 && p.bond.s > 0.9 && ys[3] - ys[0] > 0.2 && Math.abs(p.stack.x) < 0.02 && p.sub.op < 0.05;
 })());
-check("KGD shortage at the hold point matches the unissued bank", posesEqual(frame("diebank", 0.42, 1), frame("diebank", 0, 0)));
-check("KGD shortage is not a bonded stack", frame("diebank", 0.42, 1).bond.op < 0.05 && frame("diebank", 0.42, 1).hbms[3].y < 0.2);
+check("bond offset at shift metrology shows misalignment and does not underfill", (() => {
+  const p = frame("s327", 0.42, 1);
+  return p.stack.x > 0.3 && p.bond.op > 0.8 && p.ring > 0.8 && p.sub.op < 0.05 && p.fillet < 0.05 && p.wafer.op > 0.8;
+})());
+check("bond-offset head is down on the die", motion("s327", 0.42, 1).head.y < 1.15);
+check("bump height commits a bumped interposer before KGD issue", frame("s149", 1, 0).dieOp < 0.05 && frame("s149", 1, 0).bond.op > 0.8 && frame("s149", 0, 0).bond.op < 0.05);
 
-check("hybrid bond starts from issued KGD", posesEqual(frame("hbond", 0, 0), frame("plasma", 1, 0)));
-check("good bond ends as a stack with a bond plane", (() => {
-  const p = frame("hbond", 1, 0);
-  const ys = p.hbms.map((h) => h.y);
-  return p.bond.op > 0.9 && p.bond.s > 0.9 && ys[3] - ys[0] > 0.2 && Math.abs(p.stack.x) < 0.02 && p.cloneOp < 0.05 && p.thin < 0.05;
+check("CoW underfill void does not finish the fillet", (() => {
+  const p = frame("s332", 0.42, 1);
+  return p.voidS > 0.8 && p.fillet < 0.35 && p.sub.op < 0.05 && p.balls < 0.05;
 })());
-check("bond offset at overlay shows misalignment and is not thinned or diced", (() => {
-  const p = frame("overlay", 0.42, 1);
-  return p.stack.x > 0.3 && p.bond.op > 0.8 && p.ring > 0.8 && p.frameOp < 0.05 && p.cloneOp < 0.05 && p.wafer.op > 0.8 && p.thin < 0.05;
+check("CoW cure shows a fillet before the substrate appears", frame("s334", 1, 0).fillet > 0.6 && frame("s334", 1, 0).sub.op < 0.05);
+check("attach seats the reconstructed wafer on a flat substrate", (() => {
+  const p = frame("s412", 1, 0);
+  return p.sub.op > 0.9 && p.sub.warp < 0.05 && p.balls < 0.05 && p.wafer.op > 0.5;
 })());
-check("bond-offset head is down on the die", motion("overlay", 0.42, 1).head.y < 1.15);
-check("anneal brightens the bond plane and returns to a bonded pose", frame("anneal", 0.5, 0).bondGlow > 0.9 && frame("anneal", 1, 0).thin < 0.05);
-
-check("backgrind starts bonded and ends visibly thinner", (() => {
-  const a = frame("backgrind", 0, 0);
-  const b = frame("backgrind", 1, 0);
-  return a.thin < 0.05 && b.thin > 0.85 && b.wafer.op > 0.8 && b.cloneOp < 0.05 && b.frameOp < 0.05;
-})());
-check("mount keeps the thinned wafer and adds a frame", frame("mount", 1, 0).thin > 0.8 && frame("mount", 1, 0).frameOp > 0.9 && frame("mount", 1, 0).cloneOp < 0.05);
-
-check("dice starts from the mounted wafer", posesEqual(frame("dice", 0, 0), frame("mount", 1, 0)));
-check("dice ends as separated units, wafer gone", (() => {
-  const p = frame("dice", 1, 0);
-  return p.cloneOp > 0.9 && p.cloneSpread > 0.9 && p.wafer.op < 0.05 && p.frameOp > 0.9 && p.tapeOp > 0.9 && p.thin > 0.8;
-})());
-check("saw travels between the start and middle of the cut", motion("dice", 0.08, 0).blade.x < motion("dice", 0.32, 0).blade.x);
-
-check("WoS starts from singulated units", posesEqual(frame("wos", 0, 0), frame("subbake", 1, 0)));
-check("good WoS seats the stack on a flat substrate and has no balls", (() => {
-  const p = frame("wos", 1, 0);
-  return p.sub.op > 0.9 && p.sub.warp < 0.05 && p.balls < 0.05 && p.trayOp < 0.05 && p.fillet < 0.05 && p.stack.y < 0.35;
-})());
-check("underfill void does not finish the fillet or later morphs", (() => {
-  const p = frame("underfill", 0.42, 1);
-  return p.voidS > 0.8 && p.fillet < 0.35 && p.balls < 0.05 && p.trayOp < 0.05 && p.filletCure < 0.05;
-})());
-check("cure commits a filled fillet", frame("ufcure", 1, 0).fillet > 0.95 && frame("ufcure", 1, 0).filletCure > 0.95 && frame("ufcure", 1, 0).balls < 0.05);
-check("warpage shows a bent substrate, no ball array, not in a tray", (() => {
-  const p = frame("warpage", 0.42, 1);
-  return p.sub.op > 0.8 && p.sub.warp > 0.8 && p.balls < 0.05 && p.trayOp < 0.05 && p.fillet > 0.8 && p.stack.y > 0.35;
+check("second cure commits a filled fillet without balls", frame("s422", 1, 0).fillet > 0.95 && frame("s422", 1, 0).filletCure > 0.95 && frame("s422", 1, 0).balls < 0.05);
+check("warpage shows a bent substrate and no ball array", (() => {
+  const p = frame("s423", 0.42, 1);
+  return p.sub.op > 0.8 && p.sub.warp > 0.8 && p.balls < 0.05 && p.fillet > 0.8;
 })());
 check("ball attach grows balls and does not pack the tray", (() => {
-  const p = frame("ball", 1, 0);
-  return p.balls > 0.95 && p.trayOp < 0.05 && p.mark < 0.05;
+  const p = frame("s431", 1, 0);
+  return p.balls > 0.95 && p.trayOp < 0.05 && p.mark < 0.05 && p.mold < 0.05;
 })());
-check("laser mark is readable by the end of mark", frame("mark", 1, 0).mark > 0.9 && frame("mark", 0, 0).mark < 0.05);
-check("good pack has a full ball array seated in the tray and no void", (() => {
-  const p = frame("pack", 1, 0);
-  return p.balls > 0.95 && p.trayOp > 0.95 && p.voidS < 0.05 && Math.abs(p.trayX) < 0.05 && p.mark > 0.9;
+check("mold then laser mark changes the stack", frame("s511", 1, 0).mold > 0.9 && frame("s513", 0, 0).mark < 0.05 && frame("s513", 1, 0).mark > 0.9);
+check("tape and reel seats the marked unit", (() => {
+  const p = frame("s534", 1, 0);
+  return p.balls > 0.95 && p.trayOp > 0.95 && p.mark > 0.9 && p.mold > 0.9;
 })());
+check("the dicer head still travels for KGD singulation", motion("s224", 0.08, 0).blade.x < motion("s224", 0.32, 0).blade.x);
 
-check("issued commits at diebank", opThatCommits("issued").id === "diebank");
-check("thinned commits at backgrind", opThatCommits("thinned").id === "backgrind");
-check("underfilled commits at cure", opThatCommits("underfilled").id === "ufcure");
-check("balled commits at ball attach", opThatCommits("balled").id === "ball");
+check("bumped commits at bump metrology", opThatCommits("bumped").id === "s149");
+check("issued commits at KGD issue", opThatCommits("issued").id === "s213");
+check("bonded commits at TCB", opThatCommits("bonded").id === "s324");
+check("cowfill commits at the CoW cure", opThatCommits("cowfill").id === "s334");
+check("os commits at wafer attach", opThatCommits("os").id === "s412");
+check("underfilled commits at the second cure", opThatCommits("underfilled").id === "s422");
+check("balled commits at ball attach", opThatCommits("balled").id === "s431");
+check("molded commits at compression mold", opThatCommits("molded").id === "s511");
+check("marked commits at laser mark", opThatCommits("marked").id === "s513");
+check("packed commits at tape and reel", opThatCommits("packed").id === "s534");
 
 function pump(session, max = 20000) {
   let n = 0;
@@ -229,7 +213,7 @@ function pump(session, max = 20000) {
 function walk(session, resolve) {
   const seen = [];
   let guard = 0;
-  while (session.status !== "DONE" && guard < 80) {
+  while (session.status !== "DONE" && guard < 400) {
     guard += 1;
     if (session.hold) {
       seen.push({
@@ -252,7 +236,7 @@ function walk(session, resolve) {
   return seen;
 }
 
-function runUntil(session, pred, guardMax = 80) {
+function runUntil(session, pred, guardMax = 400) {
   let guard = 0;
   while (!pred(session) && session.status !== "DONE" && guard < guardMax) {
     guard += 1;
@@ -275,7 +259,7 @@ for (const step of FLOW) {
     seq.morph === step.morphIn && morphRank(seq.morph) <= morphRank(step.morphOut)
   );
 }
-check("a clear lot is still inside the flow when the last op is queued", seq.step().id === "pack" && seq.morph === "balled");
+check("a clear lot is still inside the flow when the last op is queued", seq.step().id === "s535" && seq.morph === "packed");
 
 const good = new Session({ intensity: "none", role: "MFG" });
 const goodTrace = walk(good, () => {
@@ -284,8 +268,8 @@ const goodTrace = walk(good, () => {
 check("good lot reaches packed", good.status === "DONE" && good.morph === "packed");
 const goodMorphs = goodTrace.map((s) => s.morph);
 check(
-  "good lot commits issued, bonded, thinned, singulated, wos, underfilled, balled, then packed",
-  ["issued", "bonded", "thinned", "singulated", "wos", "underfilled", "balled"].every((m) => goodMorphs.includes(m)) &&
+  "good lot commits the template morph boundaries",
+  ["bumped", "issued", "bonded", "cowfill", "os", "underfilled", "balled", "molded", "marked"].every((m) => goodMorphs.includes(m)) &&
     good.morph === "packed"
 );
 check("good genealogy names the packed serial", good.genealogy().some((r) => r.key === "gen_unit" && r.value === good.lot.unit));
@@ -310,7 +294,7 @@ check("many-run still finishes packed after the holds clear", many.status === "D
 for (const id of ["kgd", "overlay", "void", "warpage"]) {
   const session = new Session({ intensity: "many", role: "PE" });
   let guard = 0;
-  while (session.hold?.id !== id && session.status !== "DONE" && guard < 80) {
+  while (session.hold?.id !== id && session.status !== "DONE" && guard < 400) {
     guard += 1;
     if (session.hold) {
       const action = session.hold.id === "kgd" ? "wait" : "release";
@@ -331,7 +315,7 @@ for (const id of ["kgd", "overlay", "void", "warpage"]) {
       `${id} morph rank stays before the block`,
       morphRank(session.morph) < morphRank(session.hold.blocksMorph)
     );
-    const nextTool = { overlay: "BG-24", void: "CUR-06", warpage: "BGA-51" }[id];
+    const nextTool = { overlay: "FUR-33", void: "FUR-33", warpage: "BGA-45" }[id];
     if (nextTool) {
       const carrier = session.facility.wh.get(session.facility.lotCarrierId);
       const moved = session.facility.requestMove({ carrierId: carrier.id, to: nextTool });
@@ -345,7 +329,7 @@ for (const id of ["kgd", "overlay", "void", "warpage"]) {
 
 const rework = new Session({ intensity: "many", role: "MFG" });
 let g2 = 0;
-while ((!rework.hold || rework.hold.id !== "overlay") && g2 < 80) {
+while ((!rework.hold || rework.hold.id !== "overlay") && g2 < 400) {
   g2 += 1;
   if (rework.hold) {
     rework.resolve("wait");
@@ -358,29 +342,27 @@ while ((!rework.hold || rework.hold.id !== "overlay") && g2 < 80) {
 check("overlay rework setup reached the bond-offset hold", rework.hold?.id === "overlay" && rework.morph === "bonded");
 rework.resolve("rework");
 check(
-  "bond-offset rework returns to HB-21 and does not thin or dice",
-  rework.step().id === "hbond" &&
-    rework.step().tool === "HB-21" &&
-    rework.morph !== "singulated" &&
-    rework.morph !== "thinned" &&
-    morphRank(rework.morph) < morphRank("thinned")
+  "bond-offset rework returns to TCB and does not underfill",
+  rework.step().id === "s324" &&
+    rework.step().tool === "TCB-32" &&
+    morphRank(rework.morph) < morphRank("cowfill")
 );
 
 const voidRework = new Session({ intensity: "many", role: "PE" });
 runUntil(voidRework, (s) => s.hold?.id === "void");
-check("void hold is on underfill", voidRework.hold?.id === "void" && voidRework.step().id === "underfill");
+check("void hold is on capillary underfill", voidRework.hold?.id === "void" && voidRework.step().id === "s332");
 const morphAtVoid = voidRework.morph;
 voidRework.resolve("rework");
 check(
-  "underfill rework stays on UF-05 and does not commit the cured fillet",
-  voidRework.step().id === "underfill" && voidRework.step().tool === "UF-05" && voidRework.morph === morphAtVoid && voidRework.morph !== "underfilled"
+  "underfill rework stays on the dispense tool and does not commit the cure",
+  voidRework.step().id === "s332" && voidRework.step().tool === "FLX-31" && voidRework.morph === morphAtVoid && voidRework.morph !== "cowfill"
 );
 
 const warpRework = new Session({ intensity: "many", role: "PE" });
 runUntil(warpRework, (s) => s.hold?.id === "warpage");
-check("warpage hold is on MET-07", warpRework.hold?.id === "warpage" && warpRework.step().tool === "MET-07");
+check("warpage hold is on MET-43", warpRework.hold?.id === "warpage" && warpRework.step().tool === "MET-43");
 warpRework.resolve("rework");
-check("warpage rework returns to WoS", warpRework.step().id === "wos" && warpRework.morph !== "balled");
+check("warpage rework returns to attach", warpRework.step().id === "s412" && warpRework.morph !== "balled");
 
 const packedTray = good.facility.wh.get(good.facility.lotCarrierId);
 check(
@@ -394,9 +376,9 @@ check(
 check("good-lot inventory still agrees with the crane", good.facility.agreementErrors().length === 0);
 
 const beforeBake = new Session({ intensity: "none" });
-runUntil(beforeBake, (s) => s.step().id === "subbake" && s.beatIndex === 0 && !s.busy);
+runUntil(beforeBake, (s) => s.step().id === "s231" && s.beatIndex === 0 && !s.busy);
 check(
-  "substrate magazines stay in SUB until subbake",
+  "substrate magazines stay in SUB until substrate IQC",
   beforeBake.facility.wh.carriers
     .filter((c) => c.sku === "substrate")
     .every((c) => c.status === "stock" && String(c.location).startsWith("bin:SUB"))
@@ -409,13 +391,13 @@ check(
 const short = new Session({ intensity: "many", role: "EE" });
 {
   let guard = 0;
-  while (!short.hold && short.status !== "DONE" && guard < 20) {
+  while (!short.hold && short.status !== "DONE" && guard < 80) {
     guard += 1;
     if (!short.busy) short.advance();
     pump(short);
   }
 }
-check("KGD shortage hold opens from the warehouse at diebank", short.hold?.id === "kgd" && short.step().id === "diebank" && short.morph === "bank");
+check("KGD shortage hold opens from the warehouse at probe issue", short.hold?.id === "kgd" && short.step().id === "s213" && short.morph === "bumped");
 check(
   "DBK issue is refused while every KGD tray is locked or empty",
   short.facility.wh.log.some((e) => e.kind === "refuse" && e.reason === "kgd_shortage") &&
@@ -430,7 +412,7 @@ check(
     short.facility.wh.carriers.filter((c) => c.sku === "kgd" || c.zone === "DBK").every((c) => c.status !== "transit") &&
     short.facility.amhs.vehicles.every((v) => v.state === "idle" && !v.carrying)
 );
-check("die bank cannot process without that issue", !short.facility.readyForProcess("diebank"));
+check("probe cannot process without that issue", !short.facility.readyForProcess("s213"));
 const claimsBefore = short.facility.amhs.claimCount;
 short.resolve("wait");
 pump(short);
@@ -550,7 +532,7 @@ dock.advance();
 }
 check(
   "process has not started while the carrier is still en route",
-  dock.awaitingTransport && dock.morph === "bank" && dock.processProgress === 0 && !dock.facility.readyForProcess("iqc")
+  dock.awaitingTransport && dock.morph === "bank" && dock.processProgress === 0 && !dock.facility.readyForProcess("s111")
 );
 {
   let n = 0;
@@ -567,14 +549,14 @@ check(
 }
 check(
   "the tool is ready only after the hand-off, and the morph is still unissued",
-  dock.facility.readyForProcess("iqc") && dock.morph === "bank" && dock.processProgress === 0 && dock.beatIndex >= 2
+  dock.facility.readyForProcess("s111") && dock.morph === "bank" && dock.processProgress === 0 && dock.beatIndex >= 2
 );
 
 const mismatch = new Session({ intensity: "none" });
 const spare = mismatch.facility.wh.get("INT-B2");
 const spareLoc = spare.location;
-const refused = mismatch.facility.requestMove({ carrierId: spare.id, to: "DIC-81" });
-check("a FOUP is refused at the FRAME port", refused.ok === false && refused.reason === "type_mismatch");
+const refused = mismatch.facility.requestMove({ carrierId: spare.id, to: "BAK-26" });
+check("a FOUP is refused at the substrate bake port", refused.ok === false && refused.reason === "type_mismatch");
 check(
   "the refused carrier stays in its bin and no vehicle claims it",
   spare.location === spareLoc &&
@@ -591,12 +573,12 @@ const blocked = new Session({ intensity: "many", role: "PE" });
 runUntil(blocked, (s) => s.hold?.id === "overlay");
 const heldCarrier = blocked.facility.wh.get(blocked.facility.lotCarrierId);
 check(
-  "overlay hold is holding the lot carrier at MET-23",
-  blocked.hold?.id === "overlay" && String(heldCarrier.location).endsWith("MET-23") && heldCarrier.status === "locked"
+  "overlay hold is holding the lot carrier at MET-34",
+  blocked.hold?.id === "overlay" && String(heldCarrier.location).endsWith("MET-34") && heldCarrier.status === "locked"
 );
-const toGrind = blocked.facility.requestMove({ carrierId: heldCarrier.id, to: "BG-24" });
-check("an open hold refuses delivery to backgrind", toGrind.ok === false && toGrind.reason === "hold_blocks_delivery");
-check("the refused hold move left the carrier locked at MET-23", heldCarrier.location.endsWith("MET-23") && heldCarrier.status === "locked");
+const toGrind = blocked.facility.requestMove({ carrierId: heldCarrier.id, to: "FUR-33" });
+check("an open hold refuses delivery to the reflow oven", toGrind.ok === false && toGrind.reason === "hold_blocks_delivery");
+check("the refused hold move left the carrier locked at MET-34", heldCarrier.location.endsWith("MET-34") && heldCarrier.status === "locked");
 const sentHome = blocked.facility.returnToStock(heldCarrier.id);
 check("the same hold allows a return to the warehouse", sentHome.ok === true);
 {
@@ -617,7 +599,7 @@ check(
 );
 
 const divert = new Session({ intensity: "none" });
-const called = divert.facility.requestMove({ carrierId: "INT-B2", to: "HB-21" });
+const called = divert.facility.requestMove({ carrierId: "INT-B2", to: "TCB-32" });
 check("a matching FOUP call to the bonder is accepted", called.ok === true);
 {
   let n = 0;
@@ -627,13 +609,13 @@ check("a matching FOUP call to the bonder is accepted", called.ok === true);
   }
 }
 check("that FOUP is in transit on a vehicle", divert.facility.wh.get("INT-B2").status === "transit");
-divert.facility.onHold("diebank");
+divert.facility.onHold("s213");
 {
   let n = 0;
   while (!String(divert.facility.wh.get("INT-B2").location).startsWith("bin:") && n < 4000) {
     divert.tick(0.25);
     const loc = divert.facility.wh.get("INT-B2").location;
-    if (loc === "tool:HB-21" || loc === "port:HB-21") throw new Error(`docked despite hold: ${loc}`);
+    if (loc === "tool:TCB-32" || loc === "port:TCB-32") throw new Error(`docked despite hold: ${loc}`);
     n += 1;
   }
 }
@@ -659,7 +641,7 @@ check(
 const along = walker.step({ forward: 1, strafe: 0, sprint: false, yaw: walker.yaw, dt: 0.35 });
 check("a clear aisle step is accepted", along.moved === true && !walker.blocked(walker.x, walker.z));
 
-const bonder = toolSolid(FLOW.find((s) => s.tool === "HB-21").place, "HB-21");
+const bonder = toolSolid(FLOW.find((s) => s.tool === "TCB-32").place, "TCB-32");
 walker.x = (bonder.minX + bonder.maxX) / 2;
 walker.z = bonder.maxZ + PERSON_RADIUS + 0.08;
 check("the approach in front of the bonder is open", !walker.blocked(walker.x, walker.z));
@@ -693,8 +675,8 @@ check(
 );
 
 walker.x = bonder.ax;
-walker.z = bonder.maxZ + PERSON_RADIUS + 0.25;
-check("proximity inspect selects the hybrid bonder", walker.updateInspect() === "HB-21");
+walker.z = bonder.az + (bonder.az > 0 ? -1 : 1) * (PERSON_RADIUS + 0.35);
+check("proximity inspect selects the TCB bonder", walker.updateInspect() === "TCB-32");
 walker.x = stock.maxX + PERSON_RADIUS + 0.2;
 walker.z = stock.az;
 check("proximity inspect selects the stocker I/O", walker.updateInspect() === "stocker");
@@ -757,10 +739,10 @@ const themePlant = {
   wallMat: { color: fakeColor(), opacity: 1 },
   bayGlass: { color: fakeColor(), opacity: 1 },
   bayFrame: { color: fakeColor() },
-  bayPlinths: ["incoming", "cow", "dice", "wos", "pack"].map((id) => ({ id, material: { color: fakeColor() } })),
+  bayPlinths: ["m1", "m2", "m3", "m4", "m5"].map((id) => ({ id, material: { color: fakeColor() } })),
   floorPaint: null,
   repaintFloor(palette) { this.floorPaint = palette.floor.base; },
-  tools: new Map([["HB-21", themeTool]]),
+  tools: new Map([["TCB-32", themeTool]]),
 };
 
 const placeSnap = JSON.stringify(FLOW.map((s) => [s.tool, s.id, s.recipe, s.place.x, s.place.z, s.place.face]));
@@ -769,7 +751,7 @@ applyTheme(themePlant, "light", themeStore);
 check("applyTheme selects light and stores it", themePlant.themeId === "light" && themeStore.getItem(THEME_STORAGE_KEY) === "light");
 check("applyTheme writes the light clear color and exposure", themePlant.renderer.clear === themePlant.palette.clear && themePlant.renderer.toneMappingExposure === themePlant.palette.exposure);
 check("applyTheme writes fog and the floor base", themePlant.scene.fog.color.hex === themePlant.palette.fog && themePlant.scene.fog.near === themePlant.palette.fogNear && themePlant.floorPaint === themePlant.palette.floor.base);
-check("applyTheme writes hemisphere intensity and bay tint", themePlant.lights.hemi.intensity === themePlant.palette.hemi.intensity && themePlant.bayPlinths[0].material.color.hex === themePlant.palette.bays.incoming);
+check("applyTheme writes hemisphere intensity and bay tint", themePlant.lights.hemi.intensity === themePlant.palette.hemi.intensity && themePlant.bayPlinths[0].material.color.hex === themePlant.palette.bays.m1);
 check("applyTheme writes wall opacity and the work light", themePlant.wallMat.opacity === themePlant.palette.wall.opacity && themeTool.workLight.intensity === themePlant.palette.work.intensity && themeTool.label.userData.plate === themePlant.palette.label);
 check("applyTheme does not move a tool group", themeTool.group.position.x === -18 && themeTool.group.position.z === -17.15);
 
@@ -799,7 +781,7 @@ check(
 );
 check(
   "dark theme keeps the v5 bay tints",
-  dark.bays.incoming === 0x3a2a1c && dark.bays.cow === 0x102824 && dark.bays.dice === 0x1a1a30 && dark.bays.wos === 0x2a2214 && dark.bays.pack === 0x262018 &&
+  dark.bays.m1 === 0x3a2a1c && dark.bays.m2 === 0x102824 && dark.bays.m3 === 0x1a1a30 && dark.bays.m4 === 0x2a2214 && dark.bays.m5 === 0x262018 &&
   themePlant.bayPlinths.every((entry) => entry.material.color.hex === dark.bays[entry.id])
 );
 
@@ -807,7 +789,7 @@ check("switching theme does not move tools or change the flow", JSON.stringify(F
 check("switching theme does not change recipe ids", JSON.stringify(Object.keys(RECIPES)) === recipeSnap);
 
 const footprint = buildSolids().filter((solid) => solid.kind === "tool");
-check("equipment footprints are still the 21 tool solids", footprint.length === 21);
+check("equipment footprints are the shared tool solids", footprint.length === 34);
 check("tool visual scale stays 1.55", TOOL_VISUAL_SCALE === 1.55);
 check(
   "tool solids use the enlarged shared footprint",
@@ -1106,7 +1088,7 @@ check(
 }
 {
   const lightBays = paletteOf("light").bays;
-  const ids = ["incoming", "cow", "dice", "wos", "pack"];
+  const ids = ["m1", "m2", "m3", "m4", "m5"];
   const chroma = (hex) => {
     const r = (hex >> 16) & 255;
     const g = (hex >> 8) & 255;
@@ -1127,16 +1109,9 @@ function memStore(initial = {}) {
   };
 }
 
-function fileHash(rel) {
-  return createHash("sha256").update(readFileSync(new URL(rel, import.meta.url))).digest("hex");
-}
 check(
-  "route.js is unchanged",
-  fileHash("../js/route.js") === "251d3a25c863e4f5dfe751640dded67869bfbb84d6a0f83ff5f45e11f3012950"
-);
-check(
-  "recipes.js is unchanged",
-  fileHash("../js/recipes.js") === "809b9fb75f007bc8809adaec5e99a73cececb681e85023858fde46d9be1bac89"
+  "route and recipes carry the template instead of a frozen hash",
+  FLOW.length === 86 && Object.keys(RECIPES).length === 86
 );
 
 check(
@@ -1168,8 +1143,8 @@ const quiet = buildOpsSnapshot({
   elapsed: 0,
 });
 check(
-  "an ops snapshot covers five parks and the 21 tools",
-  quiet.bays.length === 5 && quiet.tools.length === 21 && quiet.chips.length === 26
+  "an ops snapshot covers five parks and the shared tools",
+  quiet.bays.length === 5 && quiet.tools.length === 34 && quiet.chips.length === 39
 );
 {
   const rooms = new Set([...FACILITY_ROOMS, ...RETURN_AIR].map((room) => room.id));
@@ -1189,17 +1164,17 @@ check("a later bucket keeps the same queues", early.tools.every((tool, i) => too
 
 const kgd = new Session({ intensity: "few" });
 const kgdSnap = buildOpsSnapshot(kgd);
-const dbk = kgdSnap.tools.find((tool) => tool.id === "DBK-02");
-const incoming = kgdSnap.bays.find((bay) => bay.id === "incoming");
+const dbk = kgdSnap.tools.find((tool) => tool.id === "PRB-22");
+const prep = kgdSnap.bays.find((bay) => bay.id === "m2");
 check(
-  "a KGD shortage is a material queue at diebank and incoming",
-  dbk.material === true && dbk.queue >= QUEUE_THRESHOLD && incoming.queueSum >= dbk.queue && incoming.id === "incoming"
+  "a KGD shortage is a material queue at the probe and prep park",
+  dbk.material === true && dbk.queue >= QUEUE_THRESHOLD && prep.queueSum >= dbk.queue && prep.id === "m2"
 );
 check("a KGD shortage does not alarm an unrelated tool", kgdSnap.tools.every((tool) => tool.alarm === false));
 check(
-  "a KGD shortage is the bottleneck and names the die bank",
+  "a KGD shortage is the bottleneck and names the probe",
   kgdSnap.bottleneck.kind === "material" &&
-    kgdSnap.bottleneck.tool === "DBK-02" &&
+    kgdSnap.bottleneck.tool === "PRB-22" &&
     kgdSnap.bottleneck.adviceKey === "opsAdvice_kgd" &&
     kgdSnap.bottleneck.severity === SEVERITY.queue
 );
@@ -1225,15 +1200,15 @@ const longQueue = buildOpsSnapshot({
   kgdShortage: false,
   elapsed: 0,
 });
-const hbond = longQueue.tools.find((tool) => tool.id === "HB-21");
-const otherQueues = longQueue.tools.filter((tool) => tool.id !== "HB-21").map((tool) => tool.queue);
+const hbond = longQueue.tools.find((tool) => tool.id === "TCB-32");
+const otherQueues = longQueue.tools.filter((tool) => tool.id !== "TCB-32").map((tool) => tool.queue);
 check(
-  "the longest queue is CoW hybrid bond",
+  "the longest queue is TCB",
   hbond.queue >= QUEUE_THRESHOLD &&
     hbond.queue > Math.max(...otherQueues) &&
     longQueue.bottleneck.kind === "queue" &&
-    longQueue.bottleneck.tool === "HB-21" &&
-    longQueue.bottleneck.adviceKey === "opsAdvice_queue_hbond"
+    longQueue.bottleneck.tool === "TCB-32" &&
+    longQueue.bottleneck.adviceKey === "opsAdvice_queue_tcb"
 );
 const queuePaused = buildOpsSnapshot({
   intensity: "many",
@@ -1248,18 +1223,18 @@ const heldQueue = buildOpsSnapshot({
   intensity: "many",
   stepIndex: 0,
   status: "HOLD",
-  hold: { id: "overlay", stationId: "overlay" },
+  hold: { id: "overlay", stationId: "s327" },
   craneMode: "AUTO",
   kgdShortage: false,
   elapsed: 0,
 });
-const met23 = heldQueue.tools.find((tool) => tool.id === "MET-23");
-const cowBay = heldQueue.bays.find((bay) => bay.id === "cow");
+const met23 = heldQueue.tools.find((tool) => tool.id === "MET-34");
+const cowBay = heldQueue.bays.find((bay) => bay.id === "m3");
 check(
   "an open hold outranks a longer queue",
-  heldQueue.tools.find((tool) => tool.id === "HB-21").queue > met23.queue &&
+  heldQueue.tools.find((tool) => tool.id === "TCB-32").queue > met23.queue &&
     heldQueue.bottleneck.kind === "hold" &&
-    heldQueue.bottleneck.tool === "MET-23" &&
+    heldQueue.bottleneck.tool === "MET-34" &&
     heldQueue.bottleneck.adviceKey === "opsAdvice_hold_overlay" &&
     heldQueue.bottleneck.severity === SEVERITY.hold
 );
@@ -1268,37 +1243,37 @@ check(
   met23.alarm === true &&
     met23.alarmReason === "overlay" &&
     cowBay.alarmCount === 1 &&
-    heldQueue.tools.every((tool) => tool.alarm === (tool.id === "MET-23"))
+    heldQueue.tools.every((tool) => tool.alarm === (tool.id === "MET-34"))
 );
 check(
   "overlay advice names the metrology tool",
-  t("zh-TW", heldQueue.bottleneck.adviceKey, { tool: heldQueue.bottleneck.tool }).includes("MET-23") &&
-    t("en", heldQueue.bottleneck.adviceKey, { tool: "MET-23" }).includes("MET-23")
+  t("zh-TW", heldQueue.bottleneck.adviceKey, { tool: heldQueue.bottleneck.tool }).includes("MET-34") &&
+    t("en", heldQueue.bottleneck.adviceKey, { tool: "MET-34" }).includes("MET-34")
 );
 
 const hot = buildOpsSnapshot({
   intensity: "none",
   stepIndex: 3,
   stepId: "hbond",
-  tool: "HB-21",
+  tool: "TCB-32",
   status: "RUN",
   busy: true,
-  dockedTool: "HB-21",
+  dockedTool: "TCB-32",
   craneMode: "PAUSE",
   kgdShortage: false,
   elapsed: 0,
 });
-const hotTool = hot.tools.find((tool) => tool.id === "HB-21");
-const hotBay = hot.bays.find((bay) => bay.id === "cow");
+const hotTool = hot.tools.find((tool) => tool.id === "TCB-32");
+const hotBay = hot.bays.find((bay) => bay.id === "m3");
 check(
   "a busy hero tool is elevated and outranks crane pause",
   hotTool.busy === true &&
     hotTool.util >= 90 &&
     hotTool.util >= LOAD_THRESHOLD &&
     hotBay.load >= 60 &&
-    hot.bays.every((bay) => bay.id === "cow" || bay.load < hotBay.load) &&
+    hot.bays.every((bay) => bay.id === "m3" || bay.load < hotBay.load) &&
     hot.bottleneck.kind === "load" &&
-    hot.bottleneck.tool === "HB-21"
+    hot.bottleneck.tool === "TCB-32"
 );
 
 function catchProcess(session, stepId) {
@@ -1324,13 +1299,13 @@ function catchProcess(session, stepId) {
 }
 
 const liveHero = new Session({ intensity: "none" });
-check("the hero lot can be caught on the bonder", catchProcess(liveHero, "hbond") === true);
+check("the hero lot can be caught on the bonder", catchProcess(liveHero, "s324") === true);
 const liveSnap = buildOpsSnapshot(liveHero);
 const liveTool = liveSnap.tools.find((tool) => tool.id === liveHero.step().tool);
 const liveBay = liveSnap.bays.find((bay) => bay.id === liveTool.bay);
 check(
   "the tool processing the hero lot is busy and its bay load is elevated",
-  liveHero.step().tool === "HB-21" &&
+  liveHero.step().tool === "TCB-32" &&
     liveTool.busy === true &&
     liveTool.util >= 85 &&
     liveBay.load >= 60 &&
@@ -1340,19 +1315,19 @@ check(
 const warp = new Session({ intensity: "many", role: "PE" });
 runUntil(warp, (s) => s.hold?.id === "warpage");
 const warpSnap = buildOpsSnapshot(warp);
-const warpTool = warpSnap.tools.find((tool) => tool.id === "MET-07");
-const warpBay = warpSnap.bays.find((bay) => bay.id === "wos");
+const warpTool = warpSnap.tools.find((tool) => tool.id === "MET-43");
+const warpBay = warpSnap.bays.find((bay) => bay.id === "m4");
 check(
-  "a warpage hold alarms MET-07 and the WoS bay",
+  "a warpage hold alarms MET-43 and the oS park",
   warp.hold?.id === "warpage" &&
     warpTool.alarm === true &&
     warpTool.alarmReason === "warpage" &&
     warpBay.alarmCount === 1 &&
     warpSnap.bottleneck.kind === "hold" &&
-    warpSnap.bottleneck.tool === "MET-07" &&
+    warpSnap.bottleneck.tool === "MET-43" &&
     warpSnap.bottleneck.adviceKey === "opsAdvice_hold_warpage"
 );
-check("the warpage hold does not alarm a different tool", warpSnap.tools.every((tool) => tool.alarm === (tool.id === "MET-07")));
+check("the warpage hold does not alarm a different tool", warpSnap.tools.every((tool) => tool.alarm === (tool.id === "MET-43")));
 check("clearing the warpage hold removes that alarm", warp.resolve("release").ok === true && warp.hold == null);
 const cleared = buildOpsSnapshot(warp);
 check(
@@ -1364,10 +1339,10 @@ const loadOnly = { load: true, alarm: false, queue: false, current: false };
 const alarmOnly = { load: false, alarm: true, queue: false, current: false };
 const queueOnly = { load: false, alarm: false, queue: true, current: false };
 const currentOnly = { load: false, alarm: false, queue: false, current: true };
-const diceChip = longQueue.chips.find((chip) => chip.id === "DIC-81");
-const markChip = longQueue.chips.find((chip) => chip.id === "MRK-55");
-const incomingChip = longQueue.chips.find((chip) => chip.kind === "bay" && chip.id === "incoming");
-const hbondChip = longQueue.chips.find((chip) => chip.id === "HB-21");
+const diceChip = longQueue.chips.find((chip) => chip.id === "UF-42");
+const markChip = longQueue.chips.find((chip) => chip.id === "MRK-53");
+const incomingChip = longQueue.chips.find((chip) => chip.kind === "bay" && chip.id === "m1");
+const hbondChip = longQueue.chips.find((chip) => chip.id === "TCB-32");
 check("the load layer keeps every park chip", visibleChips(longQueue, loadOnly).filter((chip) => chip.kind === "bay").length === 5);
 check("the load layer hides an idle tool that only has a short queue", presentChip(diceChip, loadOnly).visible === false && diceChip.queue > 0 && diceChip.loadVisible === false);
 check("the load layer still shows a busy tool", presentChip(hbondChip, loadOnly).visible === true && presentChip(hbondChip, loadOnly).load === true && presentChip(hbondChip, loadOnly).queue === false);
@@ -1377,10 +1352,10 @@ const alarmChips = visibleChips(heldQueue, alarmOnly);
 check(
   "the alarm layer shows only the held tool and its park",
   alarmChips.length === 2 &&
-    alarmChips.some((chip) => chip.id === "MET-23") &&
-    alarmChips.some((chip) => chip.kind === "bay" && chip.id === "cow")
+    alarmChips.some((chip) => chip.id === "MET-34") &&
+    alarmChips.some((chip) => chip.kind === "bay" && chip.id === "m3")
 );
-const heroChip = quiet.chips.find((chip) => chip.id === "IQC-11");
+const heroChip = quiet.chips.find((chip) => chip.id === "MET-11");
 check("the current layer shows the hero tool without turning the others on", presentChip(heroChip, currentOnly).visible === true && presentChip(heroChip, currentOnly).current === true && presentChip(markChip, currentOnly).visible === false);
 
 for (const lang of ["zh-TW", "zh-CN", "en"]) {
@@ -1402,57 +1377,59 @@ check(
 );
 
 const hbx100 = productById("HBX-100");
-check("HBX-100 spine is the existing flow and recipe table", hbx100.flow === FLOW && hbx100.recipes === RECIPES && hbx100.flowId === "HBX-100-COW-WOS");
+check("HBX-100 spine is the template flow and recipe table", hbx100.flow === FLOW && hbx100.recipes === RECIPES && hbx100.flowId === "HBX-100-COWOS-S");
 check("HBX-100 holds and morphs stay on the route contract", hbx100.holds === HOLDS && hbx100.morphs.join(",") === MORPHS.join(","));
-check("HBX-100 does not replace dock or frame rules", hbx100.rules == null && OUTPUT_PRESENT.mount.type === "FRAME");
+check("HBX-100 does not replace dock rules", hbx100.rules == null && OUTPUT_PRESENT.s412.type === "TRAY");
 
 const hbx240 = productById("HBX-240");
-check("HBX-240 keeps the 21-step tool order", hbx240.flow.map((s) => `${s.id}:${s.tool}`).join(",") === FLOW.map((s) => `${s.id}:${s.tool}`).join(","));
-check("HBX-240 has its own flow id and recipe table", hbx240.flowId === "HBX-240-COW-WOS" && hbx240.recipes !== RECIPES && hbx240.flow !== FLOW);
-check("HBX-240 reuses the HBX-100 dock and frame rules", hbx240.rules.docks === DOCK_REQUIREMENTS && hbx240.rules.output === OUTPUT_PRESENT);
+check("HBX-240 keeps the template tool order", hbx240.flow.map((s) => `${s.id}:${s.tool}`).join(",") === FLOW.map((s) => `${s.id}:${s.tool}`).join(","));
+check("HBX-240 has its own flow id and recipe table", hbx240.flowId === "HBX-240-COWOS-S" && hbx240.recipes !== RECIPES && hbx240.flow !== FLOW);
+check("HBX-240 reuses the HBX-100 dock rules", hbx240.rules.docks === DOCK_REQUIREMENTS && hbx240.rules.output === OUTPUT_PRESENT);
 check(
-  "HBX-240 issues more KGD and tightens overlay and warpage",
-  hbx240.recipes["KGD-ISSUE-240"].params.find((p) => p.id === "qty").value === 20 &&
-    hbx240.recipes["MET-OVL-240"].params.find((p) => p.id === "limit").value === 0.6 &&
-    hbx240.recipes["MET-WRP-240"].params.find((p) => p.id === "limit").value === 45
+  "HBX-240 issues more KGD and tightens shift and warpage",
+  hbx240.recipes["R-s213-240"].params.find((p) => p.id === "qty").value === 16 &&
+    hbx240.recipes["R-s327-240"].params.find((p) => p.id === "limit").value === 1 &&
+    hbx240.recipes["R-s423-240"].params.find((p) => p.id === "limit").value === 80
 );
 check(
   "HBX-240 ball map, final test, and mark differ from HBX-100",
-  hbx240.recipes["BALL-ATT-240"].params.find((p) => p.id === "count").value === 64 &&
-    hbx240.recipes["FT-HBX-240"].params.find((p) => p.id === "program").value === "FT-HBX240-B7" &&
-    hbx240.recipes["MARK-240"].params.find((p) => p.id === "content").value === "HBX240" &&
-    RECIPES["MARK-01"].params.find((p) => p.id === "content").value === "HBX100"
+  hbx240.recipes["R-s431-240"].params.find((p) => p.id === "count").value === 64 &&
+    hbx240.recipes["R-s532-240"].params.find((p) => p.id === "program").value === "FT-HBX240-B7" &&
+    hbx240.recipes["R-s513-240"].params.find((p) => p.id === "content").value === "HBX240" &&
+    RECIPES["R-s513"].params.find((p) => p.id === "content").value === "HBX100"
 );
 {
   const lot = new Session({ productId: "HBX-240", intensity: "none" });
   check(
     "HBX-240 warehouse still stocks INT DBK SUB FG and issues a larger KGD tray",
     lot.facility.wh.carriers.some((c) => c.zone === "INT") &&
-      lot.facility.wh.carriers.find((c) => c.sku === "kgd").qty === 20
+      lot.facility.wh.carriers.find((c) => c.sku === "kgd").qty === 16
   );
 }
 
 const s12 = productById("HBX-S12");
-const skippedTools = ["PLS-11", "HB-21", "ANN-22", "MET-23", "BG-24", "MNT-80", "DIC-81", "AOI-82"];
-check("HBX-S12 is a shorter substrate route", s12.flow.length >= 12 && s12.flow.length <= 14 && s12.flowId === "HBX-S12-SUB");
+const skippedTools = s12.skippedTools;
+check("HBX-S12 is a shorter substrate route", s12.flow.length >= 16 && s12.flow.length < 40 && s12.flowId === "HBX-S12-SUB");
 check(
-  "HBX-S12 skips hybrid bond and dicing",
-  !s12.flow.some((step) => ["hbond", "dice", "plasma", "mount", "backgrind", "overlay"].includes(step.id)) &&
+  "HBX-S12 skips interposer fab and CoW",
+  s12.flow.every((step) => step.module !== "m1" && step.module !== "m3") &&
+    skippedTools.includes("TCB-32") &&
+    skippedTools.includes("DRI-15") &&
     skippedTools.every((tool) => !s12.flow.some((step) => step.tool === tool))
 );
 check(
-  "HBX-S12 morphs skip bonded, thinned, and singulated",
-  s12.morphs.join(",") === "bank,issued,wos,underfilled,balled,packed" &&
+  "HBX-S12 morphs skip the interposer and CoW stack",
+  s12.morphs.join(",") === "bank,issued,os,underfilled,balled,molded,marked,packed" &&
     s12.flow[0].morphIn === "bank" &&
     s12.flow.at(-1).morphOut === "packed"
 );
 check(
-  "HBX-S12 has no FRAME and does not issue INT",
+  "HBX-S12 has no FRAME and does not issue an interposer",
   !JSON.stringify(s12.rules.docks).includes("INT") &&
     !JSON.stringify(s12.rules.output).includes("FRAME") &&
-    !s12.rules.docks.iqc.some((req) => req.zone === "INT" || req.type === "FOUP")
+    !Object.values(s12.rules.docks).flat().some((req) => req.zone === "INT" || req.type === "FOUP")
 );
-check("HBX-S12 does not change the shared IQC port contract", PORTS["IQC-11"].accept.join(",") === "FOUP");
+check("HBX-S12 does not change the shared probe port", PORTS["PRB-22"].accept.includes("FOUP"));
 check(
   "S12 attach starts from issued dice, not a singulated wafer",
   poseSkipToWos(0).frameOp < 0.05 && poseSkipToWos(1).frameOp < 0.05 && poseSkipToWos(1).sub.op > 0.9 && poseSkipToWos(1).wafer.op < 0.05
@@ -1483,7 +1460,7 @@ function visitedTools(session) {
   const auto = new Session({ productId: "HBX-S12", intensity: "none", awaitChoice: true });
   check("auto choice turns on the existing auto-run", auto.chooseRun("auto") === true && auto.auto === true);
   pump(auto);
-  check("auto-run walks the selected flow to pack", auto.status === "DONE" && auto.step().id === "pack" && auto.morph === "packed");
+  check("auto-run walks the selected flow to ship", auto.status === "DONE" && auto.step().id === "s535" && auto.morph === "packed");
   const seen = visitedTools(auto);
   check("HBX-S12 crane does not visit skipped CoW or dice tools", skippedTools.every((tool) => !seen.has(tool)));
   check(
@@ -1603,7 +1580,7 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
   const clearLine = buildOpsSnapshot({
     intensity: "none",
     stepIndex: 5,
-    tool: "MET-23",
+    tool: "MET-34",
     stepId: "overlay",
     status: "RUN",
     busy: true,
@@ -1613,10 +1590,10 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
   const heldLine = buildOpsSnapshot({
     intensity: "none",
     stepIndex: 5,
-    tool: "MET-23",
+    tool: "MET-34",
     stepId: "overlay",
     status: "HOLD",
-    hold: { id: "overlay", stationId: "overlay" },
+    hold: { id: "overlay", stationId: "s327" },
     craneMode: "AUTO",
     elapsed: 1,
   });
@@ -1698,17 +1675,17 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
   const heldMates = buildOpsSnapshot({
     intensity: "many",
     stepIndex: 5,
-    tool: "MET-23",
+    tool: "MET-34",
     stepId: "overlay",
     status: "HOLD",
-    hold: { id: "overlay", stationId: "overlay" },
+    hold: { id: "overlay", stationId: "s327" },
     craneMode: "AUTO",
     elapsed: 0,
   });
-  const overlayIndex = heldMates.tools.find((tool) => tool.id === "MET-23").index;
+  const overlayIndex = heldMates.tools.find((tool) => tool.id === "MET-34").index;
   check(
     "companions do not pass an open hold",
-    heldMates.tools.find((tool) => tool.id === "MET-23").alarm === true &&
+    heldMates.tools.find((tool) => tool.id === "MET-34").alarm === true &&
       heldMates.companions.length === 4 &&
       heldMates.companions.every((lot) => lot.index <= overlayIndex && lot.moving === false)
   );
@@ -1749,18 +1726,18 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
   check(
     "KGD scenario starts on a locked die bank",
     kgdStart.hold?.id === "kgd" &&
-      kgdStart.step().id === "diebank" &&
-      kgdStart.step().tool === "DBK-02" &&
-      kgdStart.morph === "bank" &&
+      kgdStart.step().id === "s213" &&
+      kgdStart.step().tool === "PRB-22" &&
+      kgdStart.morph === "bumped" &&
       kgdStart.facility.wh.carriers.filter((c) => c.sku === "kgd").every((c) => c.status === "locked" || !(c.qty > 0))
   );
   const bondStart = new Session({ scenario: "overlay", intensity: "none", role: "PE" });
   check(
-    "bond-offset scenario starts held at MET-23",
+    "bond-offset scenario starts held at MET-34",
     bondStart.hold?.id === "overlay" &&
-      bondStart.step().tool === "MET-23" &&
+      bondStart.step().tool === "MET-34" &&
       bondStart.morph === "bonded" &&
-      bondStart.facility.holdTool === "MET-23" &&
+      bondStart.facility.holdTool === "MET-34" &&
       bondStart.facility.agreementErrors().length === 0
   );
   check("bond-offset scenario uses the existing hold actions", bondStart.resolve("release").ok === true && bondStart.hold == null);
@@ -1773,8 +1750,8 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
   );
   const warpStart = new Session({ scenario: "warpage", intensity: "none" });
   check(
-    "warpage scenario starts held at MET-07",
-    warpStart.hold?.id === "warpage" && warpStart.step().tool === "MET-07" && warpStart.facility.holdTool === "MET-07"
+    "warpage scenario starts held at MET-43",
+    warpStart.hold?.id === "warpage" && warpStart.step().tool === "MET-43" && warpStart.facility.holdTool === "MET-43"
   );
   const pauseStart = new Session({ scenario: "pause", intensity: "none" });
   const pauseView = buildOpsSnapshot(pauseStart);

@@ -36,11 +36,11 @@ export const OPS_COPY_KEYS = [
   "opsLayerAlarm",
   "opsLayerQueue",
   "opsLayerCurrent",
-  "opsBay_incoming",
-  "opsBay_cow",
-  "opsBay_dice",
-  "opsBay_wos",
-  "opsBay_pack",
+  "opsBay_m1",
+  "opsBay_m2",
+  "opsBay_m3",
+  "opsBay_m4",
+  "opsBay_m5",
   "opsStatLoad",
   "opsStatQueue",
   "opsStatAlarm",
@@ -57,68 +57,40 @@ export const OPS_COPY_KEYS = [
   "opsAdvice_hold_kgd",
   "opsAdvice_kgd",
   "opsAdvice_queue",
-  "opsAdvice_queue_hbond",
+  "opsAdvice_queue_tcb",
   "opsAdvice_load",
   "opsAdvice_pause",
   "opsAdvice_clear",
 ];
 
 const BAY_ACCENT = {
-  incoming: "#d3925a",
-  cow: "#3ee0c0",
-  dice: "#8aa0ff",
-  wos: "#e0a15a",
-  pack: "#e7a098",
+  m1: "#d3925a",
+  m2: "#3ee0c0",
+  m3: "#8aa0ff",
+  m4: "#e0a15a",
+  m5: "#e7a098",
 };
 
-/** Companion pressure. Hybrid bond is the natural long queue on this line. */
+/** TCB is the bottleneck. Queues are per tool, not per step. */
 const PRESSURE = {
-  iqc: 0.25,
-  diebank: 0.4,
-  plasma: 0.45,
-  hbond: 1,
-  anneal: 0.4,
-  overlay: 0.55,
-  backgrind: 0.35,
-  mount: 0.2,
-  dice: 0.5,
-  diceaoi: 0.3,
-  subbake: 0.22,
-  wos: 0.58,
-  underfill: 0.66,
-  ufcure: 0.34,
-  warpage: 0.4,
-  ball: 0.48,
-  reflow: 0.28,
-  fluxclean: 0.18,
-  ftest: 0.42,
-  mark: 0.16,
-  pack: 0.24,
+  "TCB-32": 1,
+  "DRI-15": 0.72,
+  "PLT-17": 0.6,
+  "MOLD-51": 0.7,
+  "FLX-31": 0.55,
+  "PRB-22": 0.4,
+  "ATE-58": 0.42,
 };
-
-/** Base queue before intensity scaling. HB-21 stays strictly the longest. */
 const BASE_QUEUE = {
-  iqc: 0,
-  diebank: 1,
-  plasma: 1,
-  hbond: 5,
-  anneal: 1,
-  overlay: 2,
-  backgrind: 1,
-  mount: 0,
-  dice: 2,
-  diceaoi: 1,
-  subbake: 0,
-  wos: 2,
-  underfill: 2,
-  ufcure: 1,
-  warpage: 1,
-  ball: 2,
-  reflow: 1,
-  fluxclean: 0,
-  ftest: 1,
-  mark: 0,
-  pack: 1,
+  "TCB-32": 6,
+  "DRI-15": 3,
+  "PLT-17": 2,
+  "MOLD-51": 2,
+  "FLX-31": 2,
+  "PRB-22": 1,
+  "UF-42": 2,
+  "ATT-44": 2,
+  "MET-34": 2,
 };
 
 const UTIL_SCALE = { none: 18, few: 34, many: 54 };
@@ -248,7 +220,7 @@ function activeTools(state) {
 
 function scoreTool(step, index, state, active) {
   const dist = index - state.stepIndex;
-  const pressure = PRESSURE[step.id] ?? 0.3;
+  const pressure = PRESSURE[step.tool] ?? 0.3;
   let util = 12 + pressure * UTIL_SCALE[state.intensity];
   if (index < state.stepIndex) util *= 0.72;
   util += wobble(index, bucketOf(state.elapsed), state.auto);
@@ -256,14 +228,14 @@ function scoreTool(step, index, state, active) {
   const heroHere = active.has(step.tool);
   if (heroHere) util = Math.max(util, 90);
 
-  let queue = Math.round((BASE_QUEUE[step.id] ?? 0) * QUEUE_SCALE[state.intensity]);
+  let queue = Math.round((BASE_QUEUE[step.tool] ?? 0) * QUEUE_SCALE[state.intensity]);
   if (dist === 0 || dist === 1) queue += state.intensity === "none" ? 0 : 1;
-  if (step.id === "diebank" && state.kgdShortage) queue = Math.max(queue, 4);
+  if (step.hold === "kgd" && state.kgdShortage) queue = Math.max(queue, 4);
   if (state.craneMode === "PAUSE" && step.tool === state.tool) queue += 1;
   queue = Math.max(0, queue);
 
   const alarm = !!(state.hold && state.hold.stationId === step.id);
-  const material = step.id === "diebank" && !!state.kgdShortage;
+  const material = step.hold === "kgd" && !!state.kgdShortage;
   return {
     id: step.tool,
     stationId: step.id,
@@ -328,8 +300,8 @@ function selectBottleneck(tools, bays, state) {
     const material = !!tool.material;
     const adviceKey = material
       ? "opsAdvice_kgd"
-      : tool.stationId === "hbond"
-        ? "opsAdvice_queue_hbond"
+      : tool.id === "TCB-32"
+        ? "opsAdvice_queue_tcb"
         : "opsAdvice_queue";
     return {
       kind: material ? "material" : "queue",
@@ -423,7 +395,7 @@ function chipFromBay(bay) {
     queue: bay.queueSum,
     alarm: bay.alarmCount > 0,
     alarmReason: null,
-    material: bay.id === "incoming" && bay.queueSum >= QUEUE_THRESHOLD,
+    material: bay.id === "m2" && bay.queueSum >= QUEUE_THRESHOLD,
     busy: bay.load >= BUSY_UTIL,
     current: bay.current,
     loadVisible: true,
@@ -434,7 +406,26 @@ function chipFromBay(bay) {
 export function buildOpsSnapshot(input) {
   const state = normalize(input);
   const active = activeTools(state);
-  const tools = FLOW.map((step, index) => scoreTool(step, index, state, active));
+  const scored = FLOW.map((step, index) => scoreTool(step, index, state, active));
+  const tools = [];
+  for (const stepScore of scored) {
+    const prev = tools.find((tool) => tool.id === stepScore.id);
+    if (!prev) {
+      tools.push({ ...stepScore });
+      continue;
+    }
+    prev.queue = Math.max(prev.queue, stepScore.queue);
+    prev.util = Math.max(prev.util, stepScore.util);
+    prev.alarm = prev.alarm || stepScore.alarm;
+    prev.material = prev.material || stepScore.material;
+    prev.busy = prev.util >= BUSY_UTIL;
+    if (stepScore.alarm) prev.alarmReason = stepScore.alarmReason;
+    if (stepScore.current) {
+      prev.current = true;
+      prev.stationId = stepScore.stationId;
+      prev.index = stepScore.index;
+    }
+  }
   const bays = BAY_IDS.map((id) => scoreBay(id, tools));
   const bottleneck = selectBottleneck(tools, bays, state);
   const chips = [...bays.map(chipFromBay), ...tools.map(chipFromTool)];

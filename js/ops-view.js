@@ -4,16 +4,11 @@
  */
 import * as THREE from "three";
 import { presentChip } from "./ops.js";
+import { PARKS } from "./route.js";
 
 const FAMILY = "'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC','Microsoft JhengHei',sans-serif";
 
-const BAY_ANCHOR = {
-  incoming: { x: -36.75, z: -18 },
-  cow: { x: -12, z: -18 },
-  dice: { x: -34, z: 18 },
-  wos: { x: -8, z: 18 },
-  pack: { x: 24.5, z: 18 },
-};
+const BAY_ANCHOR = Object.fromEntries(PARKS.map((park) => [park.id, { x: park.x, z: -16 }]));
 
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();

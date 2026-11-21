@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "../vendor/OrbitControls.js";
 import { FacilityView } from "./facility-view.js";
-import { HOLD_AT, RAIL_NODES, RAIL_Y, STATIONS, stationById } from "./route.js";
-import { motion, poseSkipToWos, smooth, specForMorph } from "./morph.js";
+import { FLOW, HOLD_AT, PARKS, RAIL_NODES, RAIL_Y, TOOLS, stationById } from "./route.js";
+import { motion, smooth, specForMorph, useProfile } from "./morph.js";
 import { Workpiece } from "./product.js";
 import { seedCarriers } from "./warehouse.js";
 import { STOW_ANCHOR, buildTool, carrierShell, poseTool } from "./tools.js";
@@ -12,20 +12,14 @@ import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 import { buildFacilityShell, makeBillboard, makeFlatTag } from "./shell.js";
 import { CompanionLayer, OpsView } from "./ops-view.js";
 
-const BAYS = [
-  { id: "incoming", x: -36.75, z: -18, w: 16, d: 12 },
-  { id: "cow", x: -12, z: -18, w: 32, d: 12 },
-  { id: "dice", x: -34, z: 18, w: 18, d: 12 },
-  { id: "wos", x: -8, z: 18, w: 32, d: 12 },
-  { id: "pack", x: 24.5, z: 18, w: 32, d: 12 },
-];
+const BAYS = PARKS;
 
 const BAY_ACCENT = {
-  incoming: 0xd3925a,
-  cow: 0x3ee0c0,
-  dice: 0x8aa0ff,
-  wos: 0xe0a15a,
-  pack: 0xe7a098,
+  m1: 0xd3925a,
+  m2: 0x3ee0c0,
+  m3: 0x8aa0ff,
+  m4: 0xe0a15a,
+  m5: 0xe7a098,
 };
 
 const LABEL_FONT = "700 42px 'Sora','WenQuanYi Micro Hei','Droid Sans Fallback','Noto Sans CJK TC','Microsoft JhengHei',sans-serif";
@@ -128,7 +122,7 @@ export class Plant {
     this.tFn = (k) => k;
     this.lang = "zh-TW";
     this.tools = new Map();
-    this.currentToolId = STATIONS[0].tool;
+    this.currentToolId = TOOLS[0].id;
     this.carrierType = "FOUP";
     this.transport = null;
     this.pickup = null;
@@ -216,7 +210,7 @@ export class Plant {
     this.scene.add(this.inspectRing);
     this._bindWalkInput();
     applyTheme(this, readThemeId(browserStore()));
-    this.showLot("bank", STATIONS[0].tool, "FOUP");
+    this.showLot("bank", TOOLS[0].id, "FOUP");
     this.resize();
   }
 
@@ -390,6 +384,7 @@ export class Plant {
   watch(session) {
     this.session = session || null;
     this.facilityBound = !!session?.facility;
+    useProfile(session?.product?.poseProfile || "cowos");
   }
 
   showLot(morph, toolId, carrier) {
@@ -499,10 +494,8 @@ export class Plant {
   }
 
   _apply(stationId, t, fault) {
+    useProfile(this.session?.product?.poseProfile || "cowos");
     const m = motion(stationId, t, fault);
-    if (this.session?.product?.skipWaferMorph && stationId === "wos") {
-      m.pose = poseSkipToWos(t);
-    }
     this.workpiece.applyPose(m.pose, this.workpiece.compact);
     const station = stationById(stationId);
     const rec = this.tools.get(station.tool);
@@ -606,19 +599,21 @@ export class Plant {
         p.castShadow = true;
         group.add(p);
       }
-      const toward = (pz) => (bay.z < 0 && pz > 0) || (bay.z > 0 && pz < 0);
-      for (const [px, pz, sx, sz] of [[0, -hd, bay.w, 0.06], [0, hd, bay.w, 0.06], [-hw, 0, 0.06, bay.d], [hw, 0, 0.06, bay.d]]) {
-        if (toward(pz) && sx > 1) {
-          const doorW = Math.min(8, bay.w * 0.45);
-          const side = (bay.w - doorW) / 2;
-          for (const sign of [-1, 1]) {
-            const pane = new THREE.Mesh(new THREE.BoxGeometry(side, 3.15, 0.06), glass);
-            pane.position.set(sign * (doorW / 2 + side / 2), 1.75, pz);
-            group.add(pane);
-          }
-        } else {
-          const pane = new THREE.Mesh(new THREE.BoxGeometry(sx, 3.15, sz), glass);
-          pane.position.set(px, 1.75, pz);
+      const aisle = 4.2;
+      for (const [px, pz, sx, sz] of [[0, -hd, bay.w, 0.06], [0, hd, bay.w, 0.06]]) {
+        const pane = new THREE.Mesh(new THREE.BoxGeometry(sx, 3.15, sz), glass);
+        pane.position.set(px, 1.75, pz);
+        group.add(pane);
+      }
+      for (const px of [-hw, hw]) {
+        const spans = [
+          [-hd, -aisle],
+          [aisle, hd],
+        ];
+        for (const [z0, z1] of spans) {
+          if (z1 - z0 < 0.4) continue;
+          const pane = new THREE.Mesh(new THREE.BoxGeometry(0.06, 3.15, z1 - z0), glass);
+          pane.position.set(px, 1.75, (z0 + z1) / 2);
           group.add(pane);
         }
       }
@@ -631,12 +626,9 @@ export class Plant {
       plinth.position.y = 0.03;
       plinth.receiveShadow = true;
       group.add(plinth);
-      const twoLine = bay.id === "incoming";
-      const span = twoLine ? Math.min(bay.w * 0.72, 7.6) : Math.min(bay.w * 0.62, 12.8);
-      const depth = twoLine ? span / 2.35 : span / 4;
-      const half = depth / 2;
-      const edge = bay.z < 0 ? -20.55 : 20.55;
-      const localZ = bay.z < 0 ? edge - bay.z - half : edge - bay.z + half;
+      const span = Math.min(bay.w * 0.72, 10);
+      const depth = span / 3.2;
+      const localZ = -bay.d / 2 + depth / 2 + 0.4;
       const tag = makeFlatTag(bay.id);
       tag.userData.labelKey = `bay_${bay.id}`;
       tag.position.set(0, 0.14, localZ);
@@ -647,7 +639,7 @@ export class Plant {
       lab.name = `bay-label-${bay.id}`;
       lab.userData.labelKey = `bay_${bay.id}`;
       lab.scale.set(8.6, 1.8, 1);
-      lab.position.set(0, 3.15, bay.z < 0 ? hd - 1.35 : -hd + 1.35);
+      lab.position.set(0, 3.15, -hd + 2.2);
       group.add(lab);
       this.billboards.push(lab);
       this.scene.add(group);
@@ -666,10 +658,11 @@ export class Plant {
   }
 
   _buildTools() {
-    for (const station of STATIONS) {
+    for (const tool of TOOLS) {
+      const station = { ...tool, tool: tool.id };
       const built = buildTool(station);
-      const accent = "#" + BAY_ACCENT[station.place.bay].toString(16).padStart(6, "0");
-      const label = labelSprite(station.tool, station.id, accent);
+      const accent = "#" + BAY_ACCENT[tool.bay].toString(16).padStart(6, "0");
+      const label = labelSprite(tool.id, tool.kind, accent);
       label.scale.set(2.7, 0.68, 1);
       label.position.set(0, 2.35, 0);
       built.group.add(label);
@@ -680,14 +673,15 @@ export class Plant {
       this.tools.set(station.tool, {
         ...built,
         station,
-        id: station.tool,
-        bay: station.place.bay,
+        id: tool.id,
+        bay: tool.bay,
         face: station.place.face,
         label,
         workLight,
         status: "idle",
       });
-      poseTool(this.tools.get(station.tool), motion(station.id, 0, 0), 0);
+      const first = FLOW.find((step) => step.tool === tool.id);
+      poseTool(this.tools.get(tool.id), motion(first.id, 0, 0), 0);
     }
     this.opsView = new OpsView(this.scene);
     this.companions = new CompanionLayer(this.scene);
@@ -1014,14 +1008,14 @@ export class Plant {
     const processing = (this.mode === "live" || this.mode === "hold") && this.live && this.live.t < 0.999;
     if (this.handoff || processing || (atTool && (this.mode === "live" || this.mode === "hold"))) return;
     if (!lot) {
-      const tool = this.tools.get(STATIONS[0].tool);
+      const tool = this.tools.get(TOOLS[0].id);
       if (tool && this.workpiece.group.parent !== tool.chuck) {
         tool.chuck.attach(this.workpiece.group);
         this.workpiece.group.position.set(0, 0, 0);
         this.workpiece.group.scale.setScalar(1);
         this.workpiece.compact = false;
       }
-      if (this.holdId === "kgd") this._apply("diebank", 0.42, 1);
+      if (this.holdId === "kgd") this._apply(this.session?.product?.holds?.kgd?.stationId || "s213", 0.42, 1);
       return;
     }
     if (atTool) {
