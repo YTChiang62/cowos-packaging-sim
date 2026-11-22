@@ -888,12 +888,29 @@ export class Plant {
     if (!rec) return;
     rec.status = status;
     const dim = 0.05;
-    rec.lights.red.emissiveIntensity = status === "HOLD" ? 1.35 : dim;
-    rec.lights.yel.emissiveIntensity = status === "QUEUE" ? 0.95 : dim;
-    rec.lights.grn.emissiveIntensity = status === "RUN" ? 1.15 : status === "DONE" ? 0.45 : dim;
-    const col = status === "HOLD" ? 0xff6b7a : status === "QUEUE" ? 0xf0c14b : 0x3ee0c0;
-    rec.point.color.setHex(col);
-    rec.point.intensity = status === "idle" ? 0.2 : status === "HOLD" ? 2.6 : 1.5;
+    const lights = rec.lights;
+    lights.red.emissiveIntensity = dim;
+    lights.yel.emissiveIntensity = dim;
+    lights.grn.emissiveIntensity = dim;
+    if (lights.blu) lights.blu.emissiveIntensity = dim;
+    const paint = {
+      HOLD: { red: 1.35, point: 0xff6b7a, intensity: 2.6 },
+      QUEUE: { yel: 0.95, point: 0xf0c14b, intensity: 1.5 },
+      RUN: { grn: 1.15, point: 0x3ee0c0, intensity: 1.5 },
+      DONE: { grn: 0.45, point: 0x3ee0c0, intensity: 0.8 },
+      idle: { point: 0x8aa3a8, intensity: 0.2 },
+      IDLE: { point: 0x8aa3a8, intensity: 0.15 },
+      ASSIST: { yel: 1.15, point: 0xf0c14b, intensity: 1.7 },
+      DOWN: { red: 1.3, point: 0xff6b7a, intensity: 2.2 },
+      PM: { blu: 1.25, point: 0x4aa0ff, intensity: 1.6 },
+      QUAL: { blu: 0.75, yel: 0.85, point: 0xc9b6ff, intensity: 1.5 },
+    }[status] || { point: 0x8aa3a8, intensity: 0.2 };
+    if (paint.red) lights.red.emissiveIntensity = paint.red;
+    if (paint.yel) lights.yel.emissiveIntensity = paint.yel;
+    if (paint.grn) lights.grn.emissiveIntensity = paint.grn;
+    if (paint.blu && lights.blu) lights.blu.emissiveIntensity = paint.blu;
+    rec.point.color.setHex(paint.point);
+    rec.point.intensity = paint.intensity;
   }
 
   clearStatuses() {
@@ -1105,6 +1122,15 @@ export class Plant {
         rec.point.intensity = 1.5 + Math.sin(this.t * 6) * 1.1;
       } else if (rec.status === "RUN") {
         rec.lights.grn.emissiveIntensity = 0.7 + Math.sin(this.t * 3) * 0.35;
+      } else if (rec.status === "ASSIST") {
+        rec.lights.yel.emissiveIntensity = 0.55 + Math.sin(this.t * 5) * 0.45;
+      } else if (rec.status === "DOWN") {
+        rec.lights.red.emissiveIntensity = 0.6 + Math.sin(this.t * 6) * 0.55;
+      } else if (rec.status === "PM" && rec.lights.blu) {
+        rec.lights.blu.emissiveIntensity = 0.45 + Math.sin(this.t * 3) * 0.4;
+      } else if (rec.status === "QUAL") {
+        if (rec.lights.blu) rec.lights.blu.emissiveIntensity = 0.35 + Math.sin(this.t * 4) * 0.3;
+        rec.lights.yel.emissiveIntensity = 0.35 + Math.sin(this.t * 4) * 0.25;
       }
       if (this.walking && rec.id === this.walker.inspectId) {
         rec.point.intensity = Math.max(rec.point.intensity, 2.1);

@@ -60,7 +60,11 @@ import {
   toggleFocus,
   writeHud,
 } from "../js/hud.js";
-import { buildKpi, buildKpiFromSession } from "../js/kpi.js";
+import { orderLots, orderMoves } from "../js/dispatch.js";
+import { EQ_STATES, Equipment, eqBlocksStart } from "../js/equip.js";
+import { buildKpi, buildKpiFromSession, shiftTarget } from "../js/kpi.js";
+import { V13_COPY_KEYS } from "../js/v13-i18n.js";
+import { buildYield, isFinalTest } from "../js/yield.js";
 import { afterActionFigures, buildAfterAction, scenariosForProduct } from "../js/scenario.js";
 import { V11_COPY_KEYS } from "../js/v11-i18n.js";
 import { hasOwnCopy, t } from "../js/i18n.js";
@@ -1782,6 +1786,14 @@ check("a broken hud store falls back instead of throwing", readHud(memStore({ [H
     "after-action copy exists in all three languages",
     ["zh-TW", "zh-CN", "en"].every((lang) => t(lang, review.happenedKey) !== review.happenedKey && t(lang, figures[0].key, { n: figures[0].n }).includes(String(figures[0].n)))
   );
+  const s12Test = (finished.lot.tests || []).find((row) => row.stepId === "s533" || row.tool === "ATE-58");
+  check(
+    "HBX-S12 still records final-test yield after skipping M1 and M3",
+    finished.flow.every((step) => step.module !== "m1" && step.module !== "m3") &&
+      !!s12Test &&
+      s12Test.pass + s12Test.downgrade + s12Test.fail === finished.lot.totalSites &&
+      s12Test.yieldPct > 0
+  );
 }
 
 {
@@ -1875,6 +1887,194 @@ check(
   );
   check("completion builds the after-action from the existing done sheet", uiSrc.includes("buildAfterAction") && uiSrc.includes("afterActionFigures"));
   check("crane labels were not rewritten", !freshCopy.includes("手勘"));
+}
+
+{
+  check("the v12 process contract is still 5/18/86 on HBX-100-COWOS-S", FLOW.length === 86 && FLOW_ID === "HBX-100-COWOS-S" && new Set(FLOW.map((step) => step.module)).size === 5 && new Set(FLOW.map((step) => step.stage)).size === 18);
+  const s12 = productById("HBX-S12");
+  check("HBX-S12 still skips M1 and M3 and still has final test", s12.flow.every((step) => step.module !== "m1" && step.module !== "m3") && s12.flow.some((step) => step.id === "s532") && s12.flow.some((step) => step.id === "s533"));
+  check(
+    "crane labels are still 自動派車 / 手動叫車 / 暫停",
+    t("zh-TW", "modeAuto") === "自動派車" && t("zh-TW", "modeManual") === "手動叫車" && t("zh-TW", "modePause") === "暫停" &&
+      t("zh-CN", "modeAuto") === "自动派车" && t("en", "modeAuto") === "Auto dispatch"
+  );
+  check(
+    "the six equipment states are named in zh-Hant, zh-CN, and English",
+    EQ_STATES.join(",") === "RUN,IDLE,ASSIST,DOWN,PM,QUAL" &&
+      ["運行", "待機", "輔助", "當機", "保養", "驗證"].every((word, i) => t("zh-TW", "eq_" + EQ_STATES[i]) === word) &&
+      ["运行", "待机", "辅助", "当机", "保养", "验证"].every((word, i) => t("zh-CN", "eq_" + EQ_STATES[i]) === word) &&
+      ["RUN", "IDLE", "ASSIST", "DOWN", "PM", "QUAL"].every((word, i) => t("en", "eq_" + EQ_STATES[i]) === word)
+  );
+  for (const lang of ["zh-TW", "zh-CN", "en"]) {
+    for (const key of V13_COPY_KEYS) check(`${lang} has v13 copy ${key}`, hasOwnCopy(lang, key));
+  }
+  const floor = new Equipment(null);
+  const sample = floor.ids[0];
+  check("every shared tool has one of the six states", floor.ids.length === 34 && Object.values(floor.view(0)).every((state) => EQ_STATES.includes(state)));
+  for (const state of ["IDLE", "ASSIST", "DOWN", "PM", "QUAL"]) {
+    floor.force(sample, state);
+    check(`a tool can be forced to ${state}`, floor.stateOf(sample, 0) === state);
+  }
+  floor.force(sample, "IDLE");
+  check("RUN is the state while that idle tool is processing", floor.stateOf(sample, 0, { running: true }) === "RUN");
+  check("DOWN, PM, and QUAL block a process start", ["DOWN", "PM", "QUAL"].every((state) => eqBlocksStart(state)) && !eqBlocksStart("IDLE") && !eqBlocksStart("RUN") && !eqBlocksStart("ASSIST"));
+  check("a crane-pause scenario does not take process tools down", Object.values(new Equipment("pause").view(30)).every((state) => state === "IDLE"));
+
+  function reachProcess(session) {
+    session.setMode("beat");
+    const processBeat = BEATS.indexOf("process");
+    let guard = 0;
+    while (guard < 4000) {
+      guard += 1;
+      if (session.beatIndex === processBeat && !session.busy && !session.hold && session.facility.readyForProcess(session.step().id)) return true;
+      if (!session.busy && !session.awaitingTransport && !session.hold) session.advance();
+      session.tick(0.25);
+    }
+    return false;
+  }
+
+  for (const state of ["DOWN", "PM", "QUAL"]) {
+    const session = new Session({ intensity: "none" });
+    check(`${state} setup reaches the first process beat`, reachProcess(session));
+    const tool = session.step().tool;
+    session.equip.force(tool, state);
+    session.advance();
+    check(`${state} does not start the process`, session.processProgress === 0 && session.beatIndex === BEATS.indexOf("process"));
+    session.tick(1);
+    check(`${state} stays queued instead of processing`, session.processProgress === 0 && session.status === "QUEUE" && session.busy === false);
+  }
+
+  const assist = new Session({ intensity: "none" });
+  check("assist setup reaches the first process beat", reachProcess(assist));
+  const assistTool = assist.step().tool;
+  assist.equip.force(assistTool, "ASSIST");
+  assist.advance();
+  assist.tick(1);
+  check("ASSIST does not continue until it is cleared", assist.processProgress === 0 && assist.busy === false);
+  check("clearing assist lets the process start", assist.clearAssist(assistTool).ok === true && assist.eqState(assistTool) !== "ASSIST");
+  assist.advance();
+  {
+    let n = 0;
+    while (assist.processProgress <= 0 && assist.beatIndex === BEATS.indexOf("process") && n < 20) {
+      assist.tick(0.05);
+      n += 1;
+    }
+  }
+  check("the cleared tool is processing", assist.processProgress > 0 || assist.beatIndex > BEATS.indexOf("process"));
+
+  const holdWords = {
+    "zh-TW": ["圍堵", "重工", "報廢", "放行"],
+    "zh-CN": ["围堵", "重工", "报废", "放行"],
+    en: ["Contain", "Rework", "Scrap", "Release"],
+  };
+  for (const [lang, words] of Object.entries(holdWords)) {
+    check(
+      `${lang} names containment and the three dispositions`,
+      [t(lang, "dispContain"), t(lang, "dispRework"), t(lang, "dispScrap"), t(lang, "dispRelease")].join(",") === words.join(",")
+    );
+  }
+  check(
+    "rework targets are unchanged",
+    HOLDS.overlay.actions.find((action) => action.id === "rework").backTo === "s324" &&
+      HOLDS.void.actions.find((action) => action.id === "rework").backTo === "s332" &&
+      HOLDS.warpage.actions.find((action) => action.id === "rework").backTo === "s412"
+  );
+  for (const id of ["kgd", "overlay", "void", "warpage"]) {
+    const ids = HOLDS[id].actions.map((action) => action.id);
+    check(`${id} can be reworked, scrapped, or released`, ids.includes("rework") && ids.includes("scrap") && ids.includes("release"));
+  }
+
+  const contained = new Session({ intensity: "many", role: "PE" });
+  runUntil(contained, (session) => session.hold?.id === "overlay");
+  check(
+    "an open hold starts in containment and is not processed",
+    contained.hold?.phase === "contain" && contained.status === "HOLD" && contained.busy === false && contained.processProgress < 1
+  );
+  check("confirming containment keeps the lot held", contained.resolve("contain").ok === true && contained.hold?.phase === "disposition" && contained.status === "HOLD");
+  contained.resolve("rework");
+  check("rework after containment still returns to TCB", contained.step().id === "s324" && contained.holdsResolved.at(-1)?.action === "rework" && contained.holdsResolved.at(-1)?.contained === true);
+
+  const scrapped = new Session({ intensity: "many", role: "PE" });
+  runUntil(scrapped, (session) => session.hold?.id === "void");
+  scrapped.resolve("contain");
+  scrapped.resolve("scrap");
+  const scrapReview = buildAfterAction(scrapped, buildKpiFromSession(scrapped, 4));
+  check(
+    "scrap ends the lot and does not pack it as good",
+    scrapped.status === "SCRAP" &&
+      scrapped.lot.outcome === "scrap" &&
+      scrapped.lot.packedAsGood === false &&
+      scrapped.lot.goodSites === 0 &&
+      scrapped.morph !== "packed" &&
+      !scrapped.lot.notes.includes("packed") &&
+      scrapReview.choices.some((row) => row.action === "scrap" && row.contained === true)
+  );
+  scrapped.advance();
+  scrapped.tick(1);
+  check("a scrapped lot does not continue into pack", scrapped.status === "SCRAP" && scrapped.morph !== "packed" && scrapped.step().id === "s332");
+
+  const released = new Session({ intensity: "many", role: "PE" });
+  runUntil(released, (session) => session.hold?.id === "warpage");
+  released.resolve("contain");
+  check("release after containment clears the hold and records the choice", released.resolve("release").ok === true && released.hold == null && released.holdsResolved.some((row) => row.action === "release" && row.contained === true));
+  const releaseReview = buildAfterAction(released, buildKpiFromSession(released, 3));
+  check("the review keeps the release choice", releaseReview.choices.some((row) => row.id === "warpage" && row.action === "release" && row.contained === true) && afterActionFigures(releaseReview).length === 3);
+
+  const tested = (good.lot.tests || []).filter((row) => isFinalTest({ id: row.stepId, tool: row.tool }));
+  check(
+    "the good lot keeps a final-test yield and bins",
+    tested.length >= 1 &&
+      tested.every((row) => row.pass + row.downgrade + row.fail === good.lot.totalSites && row.yieldPct >= 0 && row.yieldPct <= 100 && row.bins && row.grade)
+  );
+  const sampleYield = buildYield({ id: "APX-TEST", totalSites: 12 }, { id: "s533", tool: "ATE-58" });
+  check("yield bins add up to the lot sites", sampleYield.pass + sampleYield.downgrade + sampleYield.fail === 12);
+
+  const fifo = [
+    { id: "A", arrival: 0, hot: false },
+    { id: "B", arrival: 1, hot: false },
+    { id: "H", arrival: 2, hot: true },
+  ];
+  check("FIFO keeps arrival order", orderLots(fifo, "FIFO").map((lot) => lot.id).join(",") === "A,B,H");
+  check("a hot lot jumps the queue only while that rule is on", orderLots(fifo, "HOT").map((lot) => lot.id).join(",") === "H,A,B");
+  const moves = [
+    { id: "m1", seq: 1, lotId: "A" },
+    { id: "m2", seq: 2, lotId: "H" },
+  ];
+  check("FIFO leaves the crane queue in arrival order", orderMoves(moves, "FIFO", ["H"]).map((move) => move.id).join(",") === "m1,m2");
+  check("a hot lot jumps a busy crane queue", orderMoves(moves, "HOT", ["H"]).map((move) => move.id).join(",") === "m2,m1");
+  const dispatch = new Session({ intensity: "none" });
+  check("dispatch defaults to FIFO", dispatch.dispatchRule === "FIFO" && dispatch.facility.amhs.dispatchRule === "FIFO");
+  dispatch.toggleHot(dispatch.lot.id);
+  dispatch.setDispatch("HOT");
+  check("the hero lot can be marked hot and the rule switches", dispatch.dispatchRule === "HOT" && dispatch.isHot(dispatch.lot.id) && dispatch.facility.amhs.dispatchRule === "HOT");
+  dispatch.setDispatch("FIFO");
+  check("switching back restores FIFO and keeps the mark", dispatch.dispatchRule === "FIFO" && dispatch.isHot(dispatch.lot.id));
+
+  const targetFirst = shiftTarget({ productId: "HBX-100", scenario: "first" });
+  const targetKgd = shiftTarget({ productId: "HBX-100", scenario: "kgd" });
+  const shiftKpi = buildKpi({
+    stepIndex: 1,
+    flowLength: 86,
+    status: "RUN",
+    elapsed: 2,
+    intensity: "few",
+    craneMode: "AUTO",
+    tools: [],
+    productId: "HBX-100",
+    scenario: "first",
+  });
+  check(
+    "the shift card has a target and an actual output",
+    targetFirst !== targetKgd &&
+      shiftKpi.targetOut === targetFirst &&
+      shiftKpi.actualOut === shiftKpi.throughput &&
+      Number.isFinite(shiftKpi.actualOut)
+  );
+  check(
+    "target versus actual is on the shift card",
+    readFileSync(new URL("../index.html", import.meta.url), "utf8").includes('id="kpi-target"') &&
+      readFileSync(new URL("../js/ui.js", import.meta.url), "utf8").includes("kpiTargetActual")
+  );
 }
 
 if (failed) {

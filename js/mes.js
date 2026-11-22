@@ -1,6 +1,9 @@
 import { committedMorphOf, productById } from "./catalog.js";
+import { normalizeRule } from "./dispatch.js";
+import { Equipment, eqBlocksStart } from "./equip.js";
 import { Facility } from "./facility.js";
 import { scenarioApplies } from "./scenario.js";
+import { buildYield, isFinalTest } from "./yield.js";
 import {
   HOLD_AT,
   PUTAWAY,
@@ -82,6 +85,13 @@ export class Session {
       kgdQty: this.product.kgdQty,
     });
     this._putawayStarted = false;
+    this.equip = new Equipment(this.scenario);
+    this.dispatchRule = "FIFO";
+    this.hotLots = new Set();
+    this.elapsed = 0;
+    this._equipWait = null;
+    this._equipChain = false;
+    this.facility.amhs.setDispatch?.(this.dispatchRule, this.hotLots);
     this.listeners = new Map();
     this._acc = 0;
     this._goal = 0;
@@ -195,7 +205,59 @@ export class Session {
       processProgress: this.processProgress,
       holdsResolved: this.holdsResolved.slice(),
       facility: this.facility.snapshot(),
+      eq: this.equip.view(this.elapsed || 0, { runningTool: this._runningToolId() }),
+      dispatchRule: this.dispatchRule,
+      hotLots: [...this.hotLots],
+      outcome: this.lot.outcome || null,
     };
+  }
+
+  _runningToolId() {
+    if (!this.busy || this.hold || this._equipWait || this.status === "SCRAP") return null;
+    if (BEATS[this.beatIndex] !== "process" || this.processProgress <= 0) return null;
+    return this.step().tool;
+  }
+
+  eqState(toolId) {
+    const id = toolId || this.step().tool;
+    return this.equip.stateOf(id, this.elapsed || 0, { running: id === this._runningToolId() });
+  }
+
+  _terminal() {
+    return this.status === "DONE" || this.status === "SCRAP" || this.lot.outcome === "scrap";
+  }
+
+  setDispatch(rule) {
+    this.dispatchRule = normalizeRule(rule);
+    this.facility.amhs.setDispatch?.(this.dispatchRule, this.hotLots);
+    this.change();
+    return this.dispatchRule;
+  }
+
+  toggleHot(lotId) {
+    if (!lotId) return false;
+    if (this.hotLots.has(lotId)) this.hotLots.delete(lotId);
+    else this.hotLots.add(lotId);
+    this.facility.amhs.setDispatch?.(this.dispatchRule, this.hotLots);
+    this.change();
+    return this.hotLots.has(lotId);
+  }
+
+  isHot(lotId) {
+    return this.hotLots.has(lotId);
+  }
+
+  clearAssist(toolId) {
+    const id = toolId || this.step().tool;
+    if (!this.equip.clearAssist(id, this.elapsed || 0)) return { ok: false };
+    this.lot.notes.push(`assist-cleared:${id}`);
+    if (this._equipWait?.tool === id) {
+      this._equipWait = null;
+      this._beginProcessClock();
+    }
+    this.emit("toast", { key: "toastAssist", vars: { tool: id } });
+    this.change();
+    return { ok: true };
   }
 
   change() {
@@ -219,7 +281,7 @@ export class Session {
 
   chooseRun(mode) {
     if (mode !== "auto" && mode !== "step") return false;
-    if (this.status === "DONE") return false;
+    if (this._terminal()) return false;
     this.runChoice = mode;
     if (mode === "auto") this.setAuto(true);
     else {
@@ -230,7 +292,7 @@ export class Session {
   }
 
   setAuto(on) {
-    if (this.status === "DONE" || this.runChoice == null) return;
+    if (this._terminal() || this.runChoice == null) return;
     this.auto = on;
     if (on && this.facility.mode !== "PAUSE") this.facility.setMode("AUTO");
     if (on && !this.busy && !this.hold) this.advance();
@@ -242,7 +304,7 @@ export class Session {
       this.emit("toast", { key: "needRunChoice" });
       return false;
     }
-    if (this.status === "DONE") {
+    if (this._terminal()) {
       this.emit("toast", { key: "alreadyDone" });
       return false;
     }
@@ -257,7 +319,7 @@ export class Session {
   }
 
   prevBeat() {
-    if (this.busy || this.hold || this.status === "DONE") return false;
+    if (this.busy || this.hold || this._terminal()) return false;
     if (this.mode !== "beat") return false;
     if (this.beatIndex <= 0 && this.stepIndex <= 0) return false;
     if (this.beatIndex > 0) this.beatIndex -= 1;
@@ -308,6 +370,11 @@ export class Session {
       return;
     }
 
+    if (beat === "process" && this._eqBlocks(step.tool)) {
+      this._armEquipWait(step);
+      return;
+    }
+
     if (beat === "track-out" && step.id === PUTAWAY.stationId && !this._putawayStarted) {
       this._putawayStarted = true;
       const putaway = this.facility.beginPutaway();
@@ -321,6 +388,63 @@ export class Session {
       }
     }
 
+    this._beginProcessClock();
+  }
+
+  _eqBlocks(toolId) {
+    const eq = this.equip.stateOf(toolId, this.elapsed || 0);
+    return eqBlocksStart(eq) || eq === "ASSIST";
+  }
+
+  _armEquipWait(step) {
+    const eq = this.equip.stateOf(step.tool, this.elapsed || 0);
+    this._equipChain = this._chain;
+    this._equipWait = { tool: step.tool, state: eq, acc: 0 };
+    this.busy = true;
+    this.status = "QUEUE";
+    this.processProgress = 0;
+    this.change();
+    this.emit("toast", { key: "eqBlocked", vars: { tool: step.tool, state: eq } });
+  }
+
+  _stepEquipWait(scaled) {
+    const wait = this._equipWait;
+    if (!wait) return;
+    wait.acc += scaled;
+    const eq = this.equip.stateOf(wait.tool, this.elapsed || 0);
+    const blocked = eqBlocksStart(eq) || eq === "ASSIST";
+    if (!blocked) {
+      this._equipWait = null;
+      this._chain = this._equipChain;
+      this._beginProcessClock();
+      return;
+    }
+    if (!this.equip.isForced(wait.tool) && wait.acc >= 1.25) {
+      this.equip.releaseBlock(wait.tool, this.elapsed || 0);
+      const next = this.equip.stateOf(wait.tool, this.elapsed || 0);
+      if (!eqBlocksStart(next) && next !== "ASSIST") {
+        this._equipWait = null;
+        this._chain = this._equipChain;
+        this._beginProcessClock();
+        return;
+      }
+    }
+    if (this.equip.isForced(wait.tool) && wait.acc >= 0.4) {
+      this._equipWait = null;
+      this.busy = false;
+      this.status = "QUEUE";
+      this._chain = false;
+      this.auto = false;
+      this.change();
+    }
+  }
+
+  _beginProcessClock() {
+    const beat = BEATS[this.beatIndex];
+    const step = this.step();
+    this.busy = true;
+    this.status = "RUN";
+    this.processProgress = 0;
     const beatScale = this.flow.length > 40 ? 0.16 : 1;
     const durations = {
       prepare: 0.45 * beatScale,
@@ -349,8 +473,14 @@ export class Session {
 
   tick(dt) {
     const scaled = dt * this.speed;
+    this.elapsed = (this.elapsed || 0) + scaled;
     this.facility.tick(scaled);
+    if (this.status === "SCRAP" || this.lot.outcome === "scrap") return;
     if (this._awaitingTransport && this.facility.approachDone()) this.transportDone();
+    if (this._equipWait) {
+      this._stepEquipWait(scaled);
+      return;
+    }
     if (this.hold && this.hold.waiting) {
       this._acc += scaled;
       if (this._acc >= this._goal) {
@@ -378,7 +508,7 @@ export class Session {
   _openHold(id) {
     const def = this.product.holds[id];
     this.facility.onHold(def.stationId);
-    this.hold = { id, ...def, waiting: false };
+    this.hold = { id, ...def, waiting: false, phase: "contain", contained: false };
     this.busy = false;
     this.auto = false;
     this._chain = false;
@@ -390,6 +520,19 @@ export class Session {
 
   resolve(actionId) {
     if (!this.hold) return { ok: false };
+    if (actionId === "contain") {
+      if (this.hold.phase === "disposition") return { ok: true, already: true };
+      this.hold.phase = "disposition";
+      this.hold.contained = true;
+      this.lot.notes.push(`contain:${this.hold.id}`);
+      this.status = "HOLD";
+      this.busy = false;
+      this.auto = false;
+      this._chain = false;
+      this.emit("toast", { key: "toastContain" });
+      this.change();
+      return { ok: true, contained: true };
+    }
     const action = this.hold.actions.find((a) => a.id === actionId);
     if (!action) return { ok: false };
     if (action.role && this.role !== action.role) {
@@ -419,7 +562,8 @@ export class Session {
     if (action.id === "rework") {
       const back = this.flow.findIndex((s) => s.id === action.backTo);
       const stationId = this.hold.stationId;
-      this.holdsResolved.push({ id: this.hold.id, action: "rework" });
+      const contained = !!this.hold.contained;
+      this.holdsResolved.push({ id: this.hold.id, action: "rework", contained });
       this.facility.onHoldCleared({ action: "rework", stationId, qty: this.lot.goodSites });
       this.hold = null;
       this.status = "QUEUE";
@@ -435,23 +579,13 @@ export class Session {
     }
 
     if (action.id === "scrap") {
-      if (action.newSubstrate) {
-        const sub = 300 + Math.floor(Math.random() * 600);
-        this.lot.substrate = `OSB-88-${pad(sub, 3)}`;
-        this.lot.notes.push("substrate-replaced");
-      } else {
-        const n = action.scrap || 1;
-        this.lot.scrap += n;
-        this.lot.goodSites = Math.max(0, this.lot.goodSites - n);
-        this.emit("toast", { key: "toastScrap", vars: { n } });
-      }
-      this._clearHold("scrap");
+      this._scrapLot();
       return { ok: true };
     }
 
     if (action.id === "bake") {
       const stationId = this.hold.stationId;
-      this.holdsResolved.push({ id: this.hold.id, action: "bake" });
+      this.holdsResolved.push({ id: this.hold.id, action: "bake", contained: !!this.hold.contained });
       this.facility.onHoldCleared({ action: "bake", stationId, qty: this.lot.goodSites });
       this.hold = null;
       this.status = "QUEUE";
@@ -476,10 +610,34 @@ export class Session {
     return { ok: false };
   }
 
+  _scrapLot() {
+    const id = this.hold.id;
+    const stationId = this.hold.stationId;
+    const contained = !!this.hold.contained;
+    this.lot.outcome = "scrap";
+    this.lot.packedAsGood = false;
+    this.lot.goodSites = 0;
+    this.lot.scrap = this.lot.totalSites;
+    this.lot.notes.push(`scrap:${id}`);
+    this.holdsResolved.push({ id, action: "scrap", contained });
+    this.facility.onHoldCleared({ action: "scrap", stationId, qty: 0 });
+    this.hold = null;
+    this.busy = false;
+    this.auto = false;
+    this._chain = false;
+    this._equipWait = null;
+    this.status = "SCRAP";
+    this.emit("toast", { key: "toastScrapLot" });
+    this.change();
+    this.emit("resolved", { scrap: true });
+    this.emit("complete", this.snapshot());
+  }
+
   _clearHold(action) {
     const id = this.hold.id;
     const stationId = this.hold.stationId;
-    this.holdsResolved.push({ id, action });
+    const contained = !!this.hold.contained;
+    this.holdsResolved.push({ id, action, contained });
     this.hold = null;
     if (id === "kgd" && BEATS[this.beatIndex] === "transport") {
       this.facility.onHoldCleared({ action, stationId, qty: this.lot.goodSites });
@@ -557,6 +715,12 @@ export class Session {
     if (step.morphOut === "underfilled" && step.morphIn !== "underfilled") lot.notes.push("underfilled");
     if (step.morphOut === "balled" && step.morphIn !== "balled") lot.notes.push("balled");
     if (step.morphOut === "packed" && step.morphIn !== "packed") lot.notes.push("packed");
+    if (isFinalTest(step)) {
+      const result = buildYield(lot, step);
+      lot.tests = lot.tests || [];
+      lot.tests.push(result);
+      lot.notes.push(`yield:${step.id}:${result.yieldPct}`);
+    }
   }
 
   /** Carrier model while the lot is moving into this station. */

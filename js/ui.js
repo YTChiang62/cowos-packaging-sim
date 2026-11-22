@@ -1,4 +1,5 @@
 import { PRODUCTS } from "./catalog.js";
+import { orderLots } from "./dispatch.js";
 import { t, applyStaticI18n, LANG_LABEL } from "./i18n.js";
 import { buildKpiFromSession } from "./kpi.js";
 import { BEATS, STEPS } from "./mes.js";
@@ -17,6 +18,7 @@ export function bindUI() {
     lotRecipe: document.getElementById("lot-recipe"),
     lotParams: document.getElementById("lot-params"),
     lotSites: document.getElementById("lot-sites"),
+    lotYield: document.getElementById("lot-yield"),
     lotMorph: document.getElementById("lot-morph"),
     genealogy: document.getElementById("genealogy"),
     beats: document.getElementById("beat-row"),
@@ -65,12 +67,19 @@ export function renderAll(lang, session, els) {
   renderStages(lang, snap, els, session.flow);
   renderHold(lang, session, els);
   const waiting = snap.runChoice == null;
+  const terminal = snap.status === "DONE" || snap.status === "SCRAP";
   els.btnAdvance.textContent = t(lang, snap.mode === "beat" ? "btnAdvanceBeat" : "btnAdvance");
   els.btnAuto.setAttribute("aria-pressed", String(!!snap.auto));
   els.btnAuto.textContent = t(lang, snap.auto ? "autoOn" : "autoOff");
-  els.btnAuto.disabled = waiting || snap.status === "DONE";
-  els.btnPrev.disabled = waiting || snap.mode !== "beat" || snap.busy || !!snap.hold || snap.status === "DONE";
-  els.btnAdvance.disabled = waiting || snap.status === "DONE" || !!snap.hold || !!snap.busy;
+  els.btnAuto.disabled = waiting || terminal;
+  els.btnPrev.disabled = waiting || snap.mode !== "beat" || snap.busy || !!snap.hold || terminal;
+  els.btnAdvance.disabled = waiting || terminal || !!snap.hold || !!snap.busy;
+  const assist = document.getElementById("btn-clear-assist-lot");
+  if (assist) {
+    const eq = snap.eq?.[snap.step.tool];
+    assist.hidden = eq !== "ASSIST";
+  }
+  renderDispatch(lang, session);
 }
 
 function paintProduct(lang, session) {
@@ -208,7 +217,14 @@ export function renderLot(lang, session, snap, els) {
   const stageName = stage ? stage.name[langIndex] : "";
   const modName = mod ? mod.name[langIndex] : "";
   els.lotStep.textContent = `${modName} · ${step.code} ${stageName} · ${stepIndex + 1}/${session.flow.length} ${t(lang, "step_" + step.id)}`;
-  els.lotTool.textContent = step.tool;
+  const eq = snap.eq?.[step.tool];
+  els.lotTool.textContent = eq ? `${step.tool} · ${t(lang, "eq_" + eq)}` : step.tool;
+  if (els.lotYield) {
+    const test = lot.tests?.[lot.tests.length - 1];
+    els.lotYield.textContent = test
+      ? t(lang, "yieldLine", { y: test.yieldPct, bins: test.bins, grade: test.grade })
+      : t(lang, "yieldPending");
+  }
   els.lotRecipe.textContent = step.recipe;
   if (els.lotParams) fillParams(lang, step.recipe, els.lotParams, session.product.recipes);
   els.lotSites.textContent = t(lang, "sitesLine", {
@@ -358,24 +374,41 @@ export function renderStages(lang, snap, els, flow = STEPS) {
   focus?.scrollIntoView({ block: "nearest", inline: "center" });
 }
 
+const DISP_RANK = { rework: 0, scrap: 1, release: 2 };
+
 export function renderHold(lang, session, els) {
   const hold = session.hold;
+  const phase = document.getElementById("hold-phase");
   if (!hold || hold.waiting) {
     els.holdLayer.hidden = true;
+    if (phase) phase.textContent = "";
     return;
   }
   els.holdLayer.hidden = false;
   els.holdKicker.textContent = t(lang, "holdKicker");
   els.holdTitle.textContent = t(lang, `hold_${hold.id}_title`);
   els.holdSym.textContent = t(lang, `hold_${hold.id}_sym`);
+  if (phase) {
+    phase.textContent = t(lang, hold.phase === "disposition" ? "holdPhaseChoose" : "holdPhaseContain");
+  }
   els.holdActions.innerHTML = "";
-  for (const act of hold.actions) {
+  if (hold.phase !== "disposition") {
+    const contain = document.createElement("button");
+    contain.type = "button";
+    contain.dataset.action = "contain";
+    contain.className = "primary-btn";
+    contain.innerHTML = `${t(lang, "dispContain")}<small>${t(lang, "dispContainHint")}</small>`;
+    els.holdActions.append(contain);
+    return;
+  }
+  const actions = [...hold.actions].sort((a, b) => (DISP_RANK[a.id] ?? 9) - (DISP_RANK[b.id] ?? 9));
+  for (const act of actions) {
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.action = act.id;
     b.className = act.role === "PE" ? "pe-btn" : "ghost-btn";
-    b.innerHTML = `${t(lang, act.label)}<small>${t(lang, act.hint)}${act.role ? " · " + act.role : ""}</small>`;
-    if (hold.waiting) b.disabled = true;
+    const label = DISP_RANK[act.id] != null ? t(lang, act.id === "rework" ? "dispRework" : act.id === "scrap" ? "dispScrap" : "dispRelease") : t(lang, act.label);
+    b.innerHTML = `${label}<small>${t(lang, act.hint)}${act.role ? " · " + act.role : ""}</small>`;
     els.holdActions.append(b);
   }
 }
@@ -400,7 +433,9 @@ export function showTool(lang, session, els, toolId) {
     : flow.find((s) => s.tool === toolId);
   const equipped = STATIONS.find((s) => s.tool === toolId);
   els.toolDock.classList.add("is-on");
+  const assistBtn = document.getElementById("btn-clear-assist");
   if (toolId === "stocker") {
+    if (assistBtn) assistBtn.hidden = true;
     const carriers = session?.facility?.snapshot?.().carriers || [];
     const atIo = carriers.filter((c) => String(c.location).startsWith("io:"));
     els.toolName.textContent = t(lang, "stockerName");
@@ -443,12 +478,13 @@ export function showTool(lang, session, els, toolId) {
     if (els.toolContract) els.toolContract.textContent = "";
   }
   const docked = dockedHere(session, toolId);
-  let stateKey = "state_idle";
-  if (onTool && session.hold) stateKey = "state_HOLD";
-  else if (onTool && session.busy) stateKey = "state_RUN";
-  else if (onTool) stateKey = "state_" + session.status;
+  const eq = session?.eqState?.(toolId) || "IDLE";
+  if (assistBtn) {
+    assistBtn.hidden = eq !== "ASSIST";
+    assistBtn.dataset.tool = toolId;
+  }
   writeLive(els, lang, {
-    state: t(lang, stateKey),
+    state: t(lang, "eq_" + eq),
     carrier: docked.length
       ? docked.map((c) => `${c.type}${c.lotId ? " · " + c.lotId : ""}`).join(" · ")
       : t(lang, "toolCarrierNone"),
@@ -471,6 +507,10 @@ export function showToast(lang, key, vars) {
   }
   if (vars?.reason) {
     text = t(lang, key, { ...vars, reason: t(lang, "reason_" + vars.reason) });
+  }
+  if (vars?.state) {
+    const named = t(lang, "eq_" + vars.state);
+    if (named !== `eq_${vars.state}`) text = t(lang, key, { ...vars, state: named });
   }
   el.textContent = text;
   el.hidden = false;
@@ -636,38 +676,90 @@ export function renderKpi(lang, kpi) {
   const cycle = document.getElementById("kpi-cycle");
   const throughput = document.getElementById("kpi-throughput");
   const availability = document.getElementById("kpi-availability");
+  const target = document.getElementById("kpi-target");
   if (!cycle || !throughput || !availability) return;
   if (card) card.hidden = !kpi;
   if (!kpi) {
     cycle.textContent = "—";
     throughput.textContent = "—";
     availability.textContent = "—";
+    if (target) target.textContent = "—";
     return;
   }
   cycle.textContent = t(lang, "kpiCycleValue", { n: kpi.cycleMin });
   throughput.textContent = t(lang, "kpiThroughputValue", { n: kpi.throughput });
   availability.textContent = t(lang, "kpiAvailabilityValue", { n: kpi.availability });
+  if (target) {
+    target.textContent = t(lang, "kpiTargetActual", {
+      target: kpi.targetOut ?? "—",
+      actual: kpi.actualOut ?? kpi.throughput,
+    });
+  }
 }
 
-export function renderCompanions(lang, companions, selectedId) {
+export function renderDispatch(lang, session) {
+  const rule = session?.dispatchRule || "FIFO";
+  document.querySelectorAll("[data-dispatch]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.dispatch === rule));
+  });
+  const now = document.getElementById("dispatch-now");
+  if (now) now.textContent = t(lang, rule === "HOT" ? "dispatchHot" : "dispatchFifo");
+}
+
+function hotButton(lang, id, on) {
+  const mark = document.createElement("i");
+  mark.dataset.hot = id;
+  mark.className = on ? "is-hot" : "";
+  mark.textContent = on ? t(lang, "hotMark") : t(lang, "hotMarkOff");
+  return mark;
+}
+
+export function renderCompanions(lang, companions, selectedId, session = null) {
   const list = document.getElementById("companion-list");
   if (!list) return;
+  const heroId = session?.lot?.id || "";
+  const hot = session?.hotLots;
+  const rows = session
+    ? orderLots([
+      {
+        id: heroId,
+        arrival: 100,
+        hot: !!hot?.has?.(heroId),
+        hero: true,
+        tool: session.step?.().tool || "",
+      },
+      ...(companions || []).map((lot, index) => ({
+        ...lot,
+        arrival: index,
+        hot: !!hot?.has?.(lot.id),
+      })),
+    ], session.dispatchRule || "FIFO")
+    : [
+      { id: heroId, hero: true, hot: false, tool: "" },
+      ...(companions || []).map((lot) => ({ ...lot, hero: false, hot: false })),
+    ];
   list.replaceChildren();
-  const hero = document.createElement("button");
-  hero.type = "button";
-  hero.className = "companion-chip";
-  hero.dataset.lot = "";
-  hero.textContent = t(lang, "companionHero");
-  hero.setAttribute("aria-pressed", String(!selectedId));
-  list.append(hero);
-  for (const lot of companions || []) {
+  rows.forEach((lot, index) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "companion-chip";
-    btn.dataset.lot = lot.id;
-    btn.textContent = `${lot.id} · ${lot.tool}`;
-    btn.setAttribute("aria-pressed", String(selectedId === lot.id));
+    if (lot.hero) {
+      btn.dataset.lot = "";
+      btn.setAttribute("aria-pressed", String(!selectedId));
+    } else {
+      btn.dataset.lot = lot.id;
+      btn.setAttribute("aria-pressed", String(selectedId === lot.id));
+    }
+    const label = document.createElement("span");
+    const name = lot.hero ? t(lang, "companionHero") : `${lot.id} · ${lot.tool}`;
+    label.textContent = `${index + 1} ${name}`;
+    btn.append(label);
+    if (session && (lot.hero ? heroId : lot.id)) btn.append(hotButton(lang, lot.hero ? heroId : lot.id, !!lot.hot));
     list.append(btn);
+  });
+  const kicker = document.querySelector(".companion-kicker");
+  if (kicker && session) {
+    kicker.textContent = `${t(lang, "companionKicker")} · ${t(lang, session.dispatchRule === "HOT" ? "dispatchHot" : "dispatchFifo")}`;
   }
 }
 
@@ -687,23 +779,38 @@ export function renderScenarioChoices(lang, product, selected) {
   }
 }
 
+const CHOICE_WORD = { rework: "dispRework", scrap: "dispScrap", release: "dispRelease", contain: "dispContain", wait: "hold_kgd_wait", partial: "hold_kgd_partial", bake: "hold_warpage_bake" };
+
 export function showDone(lang, session, els, elapsed = 0) {
   const lot = session.lot;
+  const scrapped = lot.outcome === "scrap";
   els.doneLayer.hidden = false;
-  els.doneSummary.textContent = t(lang, "doneSummary", {
-    lot: lot.id,
-    good: lot.goodSites,
-    scrap: lot.scrap,
-    holds: session.holdsResolved.length,
-    sn: lot.unit,
-  });
+  const title = document.getElementById("done-title");
+  if (title) title.textContent = t(lang, scrapped ? "doneTitleScrap" : "doneTitle");
+  els.doneSummary.textContent = scrapped
+    ? t(lang, "doneSummaryScrap", {
+      lot: lot.id,
+      step: session.holdsResolved.filter((row) => row.action === "scrap").map((row) => row.id).join(", ") || "—",
+      scrap: lot.scrap,
+    })
+    : t(lang, "doneSummary", {
+      lot: lot.id,
+      good: lot.goodSites,
+      scrap: lot.scrap,
+      holds: session.holdsResolved.length,
+      sn: lot.unit,
+    });
   const happened = document.getElementById("aar-happened");
   const guidance = document.getElementById("aar-guidance");
   const stats = document.getElementById("aar-stats");
+  const choices = document.getElementById("aar-choices");
+  const yieldLine = document.getElementById("aar-yield");
   if (!happened || !guidance || !stats) return;
   const selected = null;
   const review = buildAfterAction(session, buildKpiFromSession(session, elapsed, selected));
-  happened.textContent = t(lang, review.happenedKey);
+  happened.textContent = scrapped
+    ? t(lang, "aarScrap", { id: review.choices.filter((row) => row.action === "scrap").map((row) => row.id).join(", ") || "—" })
+    : t(lang, review.happenedKey);
   guidance.textContent = t(lang, review.guidanceKey);
   stats.replaceChildren();
   for (const item of afterActionFigures(review)) {
@@ -711,5 +818,25 @@ export function showDone(lang, session, els, elapsed = 0) {
     pill.className = "ops-stat";
     pill.textContent = t(lang, item.key, { n: item.n });
     stats.append(pill);
+  }
+  if (review.targetOut != null) {
+    const pill = document.createElement("span");
+    pill.className = "ops-stat";
+    pill.textContent = t(lang, "kpiTargetActual", { target: review.targetOut, actual: review.actualOut });
+    stats.append(pill);
+  }
+  if (choices) {
+    choices.textContent = review.choices.length
+      ? review.choices.map((row) => {
+        const word = CHOICE_WORD[row.action] ? t(lang, CHOICE_WORD[row.action]) : row.action;
+        const contained = row.contained ? `${t(lang, "dispContain")} · ` : "";
+        return t(lang, "aarChoice", { id: `${contained}${row.id}`, action: word });
+      }).join("  ")
+      : "";
+  }
+  if (yieldLine) {
+    yieldLine.textContent = review.yield
+      ? t(lang, "aarYield", { step: review.yield.stepId, y: review.yield.yieldPct, bins: review.yield.bins })
+      : "";
   }
 }

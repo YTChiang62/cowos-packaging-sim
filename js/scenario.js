@@ -25,6 +25,7 @@ export function buildAfterAction(sessionLike, kpi = {}) {
   const scenario = sessionLike?.scenario || "shift";
   const resolved = sessionLike?.holdsResolved || [];
   const holds = resolved.length;
+  const tests = sessionLike?.lot?.tests || [];
   return {
     scenario,
     happenedKey: `aarHappened_${scenario}`,
@@ -32,6 +33,15 @@ export function buildAfterAction(sessionLike, kpi = {}) {
     cycleMin: kpi.cycleMin ?? 0,
     holds,
     availability: kpi.availability ?? 0,
+    choices: resolved.map((row) => ({
+      id: row.id,
+      action: row.action,
+      contained: !!row.contained,
+    })),
+    outcome: sessionLike?.lot?.outcome || "good",
+    yield: tests.length ? tests[tests.length - 1] : null,
+    targetOut: kpi.targetOut ?? null,
+    actualOut: kpi.actualOut ?? kpi.throughput ?? null,
   };
 }
 
