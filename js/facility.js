@@ -288,7 +288,7 @@ export class Facility {
     this.holdOpen = false;
     this.amhs.clearHold();
     const kgdStation = stationId === HOLDS.kgd.stationId || stationId === S12_HOLDS.kgd.stationId;
-    if (kgdStation && (action === "wait" || action === "partial" || action === "release")) {
+    if (kgdStation && (action === "wait" || action === "partial" || action === "release" || action === "rework")) {
       this.wh.replenishKgd(action === "partial" ? qty : this.kgdQty);
       return;
     }

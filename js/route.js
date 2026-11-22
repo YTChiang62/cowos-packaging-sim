@@ -169,6 +169,9 @@ export const HOLDS = {
     actions: [
       { id: "wait", label: "hold_kgd_wait", hint: "hold_kgd_wait_s", role: null },
       { id: "partial", label: "hold_kgd_partial", hint: "hold_kgd_partial_s", role: "PE" },
+      { id: "rework", label: "hold_kgd_rework", hint: "hold_kgd_rework_s", role: null, backTo: "s213" },
+      { id: "scrap", label: "hold_kgd_scrap", hint: "hold_scrap_end_s", role: null },
+      { id: "release", label: "hold_kgd_release", hint: "hold_kgd_release_s", role: "PE" },
     ],
   },
   overlay: {
@@ -179,7 +182,7 @@ export const HOLDS = {
     radio: "radioOverlayPE",
     actions: [
       { id: "rework", label: "hold_overlay_rework", hint: "hold_overlay_rework_s", role: null, backTo: "s324" },
-      { id: "scrap", label: "hold_overlay_scrap", hint: "hold_overlay_scrap_s", role: null, scrap: 2 },
+      { id: "scrap", label: "hold_overlay_scrap", hint: "hold_scrap_end_s", role: null, scrap: 2 },
       { id: "release", label: "hold_overlay_release", hint: "hold_overlay_release_s", role: "PE" },
     ],
   },
@@ -192,7 +195,7 @@ export const HOLDS = {
     actions: [
       { id: "rework", label: "hold_warpage_rework", hint: "hold_warpage_rework_s", role: null, backTo: "s412" },
       { id: "bake", label: "hold_warpage_bake", hint: "hold_warpage_bake_s", role: null },
-      { id: "scrap", label: "hold_warpage_scrap", hint: "hold_warpage_scrap_s", role: null, newSubstrate: true },
+      { id: "scrap", label: "hold_warpage_scrap", hint: "hold_scrap_end_s", role: null, newSubstrate: true },
       { id: "release", label: "hold_warpage_release", hint: "hold_warpage_release_s", role: "PE" },
     ],
   },
@@ -204,7 +207,7 @@ export const HOLDS = {
     radio: "radioVoidMFG",
     actions: [
       { id: "rework", label: "hold_void_rework", hint: "hold_void_rework_s", role: null, backTo: "s332" },
-      { id: "scrap", label: "hold_void_scrap", hint: "hold_void_scrap_s", role: null, scrap: 1 },
+      { id: "scrap", label: "hold_void_scrap", hint: "hold_scrap_end_s", role: null, scrap: 1 },
       { id: "release", label: "hold_void_release", hint: "hold_void_release_s", role: "PE" },
     ],
   },
@@ -410,7 +413,12 @@ export const S12_OUTPUT = {
 };
 
 export const S12_HOLDS = {
-  kgd: cloneHold(HOLDS.kgd, { stationId: "s12_issue" }),
+  kgd: cloneHold(HOLDS.kgd, {
+    stationId: "s12_issue",
+    actions: HOLDS.kgd.actions.map((action) => (
+      action.id === "rework" ? { ...action, backTo: "s12_issue" } : { ...action }
+    )),
+  }),
   void: cloneHold(HOLDS.void, {
     stationId: "s421",
     blocksMorph: "underfilled",

@@ -4,6 +4,7 @@
  * Vehicle state is one of: idle, goto_pick, hoist_pick, travel, hoist_drop, paused.
  * A carrier becomes in-transit only when the hoist actually couples it.
  */
+import { orderMoves } from "./dispatch.js";
 import { smooth } from "./morph.js";
 import {
   LEG,
@@ -38,6 +39,9 @@ export class Amhs {
     this.mode = "AUTO";
     this.queue = [];
     this.holdTool = null;
+    this.dispatchRule = "FIFO";
+    this.hotLots = new Set();
+    this._seq = 0;
     this.claimCount = 0;
     this.vehicles = VEHICLE_IDS.map((id, index) => this._vehicle(id, index));
   }
@@ -78,6 +82,19 @@ export class Amhs {
     return { ok: true, mode };
   }
 
+  setDispatch(rule, hotLots = []) {
+    this.dispatchRule = rule === "HOT" ? "HOT" : "FIFO";
+    this.hotLots = new Set(hotLots || []);
+    this._orderQueue();
+    return { ok: true, rule: this.dispatchRule };
+  }
+
+  _orderQueue() {
+    if (this.dispatchRule !== "HOT") return;
+    const ordered = orderMoves(this.queue, this.dispatchRule, this.hotLots);
+    this.queue = ordered.map((move) => this.queue.find((item) => item.id === move.id) || move);
+  }
+
   /**
    * Queue or assign a move. `explicit` is a trainee call (manual 叫車).
    * AUTO assigns immediately. MANUAL assigns only explicit calls.
@@ -100,7 +117,13 @@ export class Amhs {
       return { ok: false, reason: "paused" };
     }
     move.phase = "queued";
+    move.lotId = move.lotId || carrier.lotId || null;
+    if (!Number.isFinite(move.seq)) {
+      this._seq += 1;
+      move.seq = this._seq;
+    }
     if (!this.queue.includes(move)) this.queue.push(move);
+    if (this.dispatchRule === "HOT") this._orderQueue();
     if (this.mode === "PAUSE") return { ok: true, queued: true, assigned: false, id: move.id };
     if (this.mode === "MANUAL" && !explicit) return { ok: true, queued: true, assigned: false, id: move.id };
     const assigned = this._assign(move);

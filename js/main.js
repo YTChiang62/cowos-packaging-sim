@@ -9,7 +9,7 @@ import { STATIONS } from "./route.js";
 import { buildOpsSnapshot, opsInputFromSession, readLayers, selectCompanion, writeLayers } from "./ops.js";
 import { scenariosForProduct } from "./scenario.js";
 import {
-  bindUI, renderAll, renderCatalog, renderCompanions, renderFacility, renderKpi, renderOps, showTool, hideTool, showToast, showRadio, showDone,
+  bindUI, renderAll, renderCatalog, renderCompanions, renderDispatch, renderFacility, renderKpi, renderOps, showTool, hideTool, showToast, showRadio, showDone,
 } from "./ui.js";
 
 const canvas = document.getElementById("view");
@@ -73,8 +73,10 @@ function syncOps(force = false) {
   const selected = selectCompanion(snap.companions, state.selectedLotId);
   const sig = JSON.stringify({
     bottleneck: snap.bottleneck,
-    rows: snap.tools.map((tool) => [tool.util, tool.queue, tool.alarm ? 1 : 0, tool.busy ? 1 : 0]),
+    rows: snap.tools.map((tool) => [tool.util, tool.queue, tool.alarm ? 1 : 0, tool.busy ? 1 : 0, tool.eq || "IDLE"]),
     companions: snap.companions.map((lot) => [lot.id, lot.tool, lot.pose]),
+    dispatch: state.session.dispatchRule,
+    hot: [...state.session.hotLots],
     selected: state.selectedLotId,
     layers: opsLayers,
     lang: state.lang,
@@ -88,7 +90,9 @@ function syncOps(force = false) {
     state.lang,
     buildKpiFromSession(state.session, opsElapsed, selected ? selected.index : null)
   );
-  renderCompanions(state.lang, snap.companions, state.selectedLotId);
+  renderCompanions(state.lang, snap.companions, state.selectedLotId, state.session);
+  renderDispatch(state.lang, state.session);
+  paintEquipment();
 }
 
 function syncPresetUi() {
@@ -202,14 +206,21 @@ function attachSession(session) {
   syncOps(true);
 }
 
+function paintEquipment() {
+  const s = state.session;
+  if (!s?.equip) return;
+  const running = s._runningToolId?.() || null;
+  const map = s.equip.view(s.elapsed || 0, { runningTool: running });
+  for (const [id, eq] of Object.entries(map)) plant.setToolStatus(id, eq);
+  if (s.hold) plant.setToolStatus(s.step().tool, "HOLD");
+  else if (s.status === "DONE") plant.setToolStatus(s.step().tool, "DONE");
+}
+
 function syncPlantStatus() {
   const s = state.session;
   if (!s) return;
-  plant.clearStatuses();
-  const tool = s.step().tool;
-  const visual = s.status === "HOLD" ? "HOLD" : s.status === "DONE" ? "DONE" : s.busy ? "RUN" : "QUEUE";
-  plant.setToolStatus(tool, visual);
-  if (!plant.blocksSync()) plant.showLot(s.morph, tool, s.displayCarrier());
+  paintEquipment();
+  if (!plant.blocksSync()) plant.showLot(s.morph, s.step().tool, s.displayCarrier());
   if (state.selectedTool) showTool(state.lang, s, els, state.selectedTool);
 }
 
@@ -349,11 +360,37 @@ document.getElementById("scenario-row").addEventListener("click", (e) => {
 });
 
 document.getElementById("companion-list").addEventListener("click", (e) => {
+  const hot = e.target.closest("[data-hot]");
+  if (hot && state.session) {
+    state.session.toggleHot(hot.dataset.hot);
+    syncOps(true);
+    return;
+  }
   const b = e.target.closest("[data-lot]");
   if (!b) return;
   state.selectedLotId = b.dataset.lot || null;
   plant.setSelectedLot(state.selectedLotId);
   syncOps(true);
+});
+
+document.body.addEventListener("click", (e) => {
+  const rule = e.target.closest("[data-dispatch]");
+  if (!rule || !state.session) return;
+  state.session.setDispatch(rule.dataset.dispatch);
+  syncOps(true);
+});
+
+function clearCurrentAssist(toolId) {
+  if (!state.session) return;
+  state.session.clearAssist(toolId || state.session.step().tool);
+  syncOps(true);
+  if (state.selectedTool) showTool(state.lang, state.session, els, state.selectedTool);
+}
+document.getElementById("btn-clear-assist")?.addEventListener("click", (e) => {
+  clearCurrentAssist(e.currentTarget.dataset.tool);
+});
+document.getElementById("btn-clear-assist-lot")?.addEventListener("click", () => {
+  clearCurrentAssist(state.session?.step().tool);
 });
 
 document.getElementById("preset-dock").addEventListener("click", (e) => {

@@ -1,13 +1,25 @@
 /**
- * Shift KPI for the training lot. Three numbers only:
+ * Shift KPI for the training lot. Three numbers:
  * cycle time (minutes), throughput (lots per hour), availability (percent).
+ * Plus one compact line: shift target versus actual output.
  *
  * Values come from the hero step, the ops snapshot, an open hold, and crane
  * pause. They change when the elapsed-time bucket changes, not every frame.
+ * The target is a preset for the product and scenario, not a planning system.
  */
 import { buildOpsSnapshot, opsInputFromSession } from "./ops.js";
 
 export const KPI_BUCKET_SEC = 6;
+
+const PRODUCT_TARGET = { "HBX-100": 4.2, "HBX-240": 3.4, "HBX-S12": 5.1 };
+const SCENARIO_TARGET = { first: 0, kgd: -0.8, overlay: -0.6, warpage: -0.6, pause: -0.5 };
+
+/** Preset output rate (lots per hour) for this product and scenario. */
+export function shiftTarget({ productId = "HBX-100", scenario = "first" } = {}) {
+  const base = PRODUCT_TARGET[productId] ?? PRODUCT_TARGET["HBX-100"];
+  const cut = SCENARIO_TARGET[scenario] ?? 0;
+  return Math.round((base + cut) * 10) / 10;
+}
 
 export function kpiBucket(elapsed) {
   const t = Number(elapsed);
@@ -55,11 +67,18 @@ export function buildKpi(input = {}) {
   if (paused) availability -= 11;
   availability = clamp(availability, 40, 99);
 
+  const targetOut = shiftTarget({
+    productId: input.productId || "HBX-100",
+    scenario: input.scenario || "first",
+  });
+
   return {
     cycleMin,
     throughput,
     availability,
     bucket,
+    targetOut,
+    actualOut: throughput,
   };
 }
 
@@ -71,5 +90,7 @@ export function buildKpiFromSession(session, elapsed = 0, selectedIndex = null) 
     flowLength: session.flow?.length || 21,
     tools: snap.tools,
     selectedIndex: Number.isInteger(selectedIndex) ? selectedIndex : null,
+    productId: session.product?.id || "HBX-100",
+    scenario: session.scenario || "first",
   });
 }

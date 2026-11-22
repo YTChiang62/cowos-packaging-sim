@@ -63,6 +63,10 @@
         <dd class="mono" id="lot-tool">—</dd>
       </div>
       <div class="meta">
+        <dt data-i18n="metaYield">終測分級</dt>
+        <dd id="lot-yield">—</dd>
+      </div>
+      <div class="meta">
         <dt data-i18n="metaCarrier">载具</dt>
         <dd id="lot-carrier">—</dd>
       </div>
@@ -114,6 +118,14 @@
       <div class="kicker" data-i18n="genKicker">站点谱系</div>
       <ul class="gen-list" id="genealogy"></ul>
     </div>
+    <div class="dispatch-row">
+      <span data-i18n="dispatchLabel">派工</span>
+      <div class="seg" id="dispatch-rule" role="group">
+        <button type="button" data-dispatch="FIFO" aria-pressed="true" data-i18n="dispatchFifo">先到先做</button>
+        <button type="button" data-dispatch="HOT" aria-pressed="false" data-i18n="dispatchHot">急批</button>
+      </div>
+    </div>
+    <button type="button" class="ghost-btn" id="btn-clear-assist-lot" hidden data-i18n="btnClearAssist">解除輔助</button>
     <p class="help-hint" data-i18n="helpHint">空白键推进 · F 跟随批次 · 1 总览 · 点击机台查看配方。此为培训原型，不连接真实 MES。</p>
   </aside>
 
@@ -166,6 +178,7 @@
       </div>
     </dl>
     <p class="tool-contract" id="tool-contract"></p>
+    <button type="button" class="ghost-btn" id="btn-clear-assist" hidden data-i18n="btnClearAssist">解除輔助</button>
     <button type="button" class="ghost-btn" id="btn-jump-tool" data-i18n="btnJumpTool">镜头跳至本站</button>
   </aside>
 
@@ -221,6 +234,14 @@
         <dd id="kpi-availability">—</dd>
       </div>
     </dl>
+    <p class="kpi-target" id="kpi-target">—</p>
+    <div class="dispatch-row">
+      <span id="dispatch-now" data-i18n="dispatchFifo">先到先做</span>
+      <div class="seg" role="group">
+        <button type="button" data-dispatch="FIFO" aria-pressed="true" data-i18n="dispatchFifo">先到先做</button>
+        <button type="button" data-dispatch="HOT" aria-pressed="false" data-i18n="dispatchHot">急批</button>
+      </div>
+    </div>
     <div class="kicker companion-kicker" data-i18n="companionKicker">現場批次</div>
     <div id="companion-list" class="companion-list"></div>
   </aside>
@@ -323,6 +344,7 @@
       <div class="kicker" id="hold-kicker">HOLD</div>
       <h1 id="hold-title">—</h1>
       <p class="hold-sym" id="hold-sym">—</p>
+      <p class="hold-phase" id="hold-phase"></p>
       <div class="field-label" data-i18n="ocapLabel">OCAP 处置</div>
       <div class="ocap" id="hold-actions"></div>
     </div>
@@ -331,13 +353,15 @@
   <div class="overlay" id="done-layer" hidden>
     <div class="sheet panel">
       <div class="kicker" data-i18n="doneKicker">跑程完成</div>
-      <h1 data-i18n="doneTitle">训练批已包装出货</h1>
+      <h1 id="done-title" data-i18n="doneTitle">训练批已包装出货</h1>
       <p class="lede" id="done-summary"></p>
       <div class="aar" id="done-review">
         <div class="kicker" data-i18n="aarKicker">復盤</div>
         <h2 id="aar-title" data-i18n="aarTitle">這一班</h2>
         <p id="aar-happened"></p>
         <p id="aar-guidance"></p>
+        <p id="aar-choices"></p>
+        <p id="aar-yield"></p>
         <div class="ops-stats" id="aar-stats"></div>
       </div>
       <button type="button" class="primary-btn" id="btn-restart" data-i18n="btnRestart">再开一批</button>

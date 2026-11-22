@@ -186,6 +186,10 @@ export class OpsView {
       else if (chip.material) reason = t("opsReason_kgd");
       else reason = t(`opsBay_${chip.bay}`);
     }
+    if (chip.kind === "tool" && chip.eq && chip.eq !== "IDLE" && chip.eq !== "RUN") {
+      const eqLabel = t(`eq_${chip.eq}`);
+      reason = reason ? `${eqLabel} · ${reason}` : eqLabel;
+    }
     const title = chip.kind === "bay" ? t(`opsBay_${chip.id}`) : chip.id;
     return {
       parts,

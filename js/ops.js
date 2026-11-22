@@ -11,6 +11,7 @@
  * Numbers are derived from the session. They step with elapsed time in
  * fixed buckets and do not jump every frame.
  */
+import { equipmentView } from "./equip.js";
 import { BAY_IDS, FLOW, PORTS } from "./route.js";
 
 export const LOAD_THRESHOLD = 80;
@@ -181,6 +182,13 @@ export function opsInputFromSession(session, elapsed = 0) {
     dockedTool: dockedFrom(fac),
     elapsed,
     auto: !!session.auto,
+    scenario: session.scenario || null,
+    productId: session.product?.id || null,
+    eqMap: session.equip?.view?.(session.elapsed || elapsed || 0, {
+      runningTool: session.busy && !session.hold && session.processProgress > 0 && !session._equipWait
+        ? step.tool
+        : null,
+    }) || null,
   };
 }
 
@@ -204,6 +212,9 @@ function normalize(input) {
     dockedTool: input?.dockedTool || null,
     elapsed: input?.elapsed || 0,
     auto: !!input?.auto,
+    scenario: input?.scenario || null,
+    productId: input?.productId || null,
+    eqMap: input?.eqMap || null,
   };
 }
 
@@ -248,6 +259,7 @@ function scoreTool(step, index, state, active) {
     material,
     busy: util >= BUSY_UTIL,
     current: step.tool === state.tool,
+    eq: "IDLE",
   };
 }
 
@@ -381,6 +393,7 @@ function chipFromTool(tool) {
     busy: tool.busy,
     current: tool.current,
     loadVisible: tool.busy,
+    eq: tool.eq || "IDLE",
   };
 }
 
@@ -426,6 +439,8 @@ export function buildOpsSnapshot(input) {
       prev.index = stepScore.index;
     }
   }
+  const eqMap = state.eqMap || equipmentView(state.elapsed, state.scenario);
+  for (const tool of tools) tool.eq = eqMap[tool.id] || "IDLE";
   const bays = BAY_IDS.map((id) => scoreBay(id, tools));
   const bottleneck = selectBottleneck(tools, bays, state);
   const chips = [...bays.map(chipFromBay), ...tools.map(chipFromTool)];
@@ -510,7 +525,8 @@ export function selectCompanion(companions, id) {
 export function presentChip(chip, layers) {
   const on = sanitizeLayers(layers);
   const load = on.load && !!chip.loadVisible;
-  const alarm = on.alarm && !!chip.alarm;
+  const notable = chip.kind === "tool" && !!chip.eq && chip.eq !== "IDLE" && chip.eq !== "RUN";
+  const alarm = on.alarm && (!!chip.alarm || notable);
   const queue = on.queue && chip.queue > 0;
   const current = on.current && !!chip.current;
   return {
