@@ -82,6 +82,10 @@ function stackLight(parent, x, y, z) {
   const yel = cyl(g, 0.055, 0.055, 0.07, mat(0x6a5824, { emissive: 0xf0c14b, emissiveIntensity: 0.12 }), 0, 1.29, 0);
   const grn = cyl(g, 0.055, 0.055, 0.07, mat(0x1e4a3c, { emissive: 0x3ee0c0, emissiveIntensity: 0.12 }), 0, 1.38, 0);
   const blu = cyl(g, 0.055, 0.055, 0.07, mat(0x1a3860, { emissive: 0x4aa0ff, emissiveIntensity: 0.28 }), 0, 1.47, 0);
+  red.userData.detail = "keep";
+  yel.userData.detail = "keep";
+  grn.userData.detail = "keep";
+  blu.userData.detail = "keep";
   cyl(g, 0.04, 0.04, 0.04, DARK, 0, 1.54, 0);
   parent.add(g);
   return { red: red.material, yel: yel.material, grn: grn.material, blu: blu.material };

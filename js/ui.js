@@ -540,10 +540,14 @@ function locationText(lang, location) {
   return loc || "—";
 }
 
-export function renderFacility(lang, session) {
+export function renderFacility(lang, session, snap = null) {
   const dock = document.getElementById("facility-dock");
   if (!dock) return;
-  const snap = session?.facility?.snapshot?.();
+  if (dock.classList.contains("is-hud-hidden")) {
+    if (dock.dataset.sig) dock.dataset.sig = "";
+    return;
+  }
+  if (!snap) snap = session?.facility?.snapshot?.();
   if (!snap) {
     dock.dataset.sig = "";
     return;

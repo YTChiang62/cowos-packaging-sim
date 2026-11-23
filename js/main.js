@@ -263,11 +263,13 @@ function paintMorph() {
   } else {
     text = t(lang, "morph_" + s.morph);
   }
-  els.lotMorph.dataset.live = live ? "1" : "";
-  els.lotMorph.textContent = text;
+  const liveFlag = live ? "1" : "";
+  if (els.lotMorph.dataset.live !== liveFlag) els.lotMorph.dataset.live = liveFlag;
+  if (els.lotMorph.textContent !== text) els.lotMorph.textContent = text;
   if (els.btnReplay) {
     const back = plant.mode === "solo" || plant.mode === "soloHold";
-    els.btnReplay.textContent = t(lang, back ? "btnReturn" : "btnReplay");
+    const label = t(lang, back ? "btnReturn" : "btnReplay");
+    if (els.btnReplay.textContent !== label) els.btnReplay.textContent = label;
   }
 }
 
@@ -687,8 +689,10 @@ function loop(now) {
     syncOps();
   }
   const spd = state.session ? state.session.speed : 1;
+  const frameSnap = state.session ? state.session.facility.snapshot() : null;
+  plant._frameSnap = frameSnap;
   plant.update(dt, spd);
-  renderFacility(state.lang, state.session);
+  renderFacility(state.lang, state.session, frameSnap);
   paintMorph();
   requestAnimationFrame(loop);
 }

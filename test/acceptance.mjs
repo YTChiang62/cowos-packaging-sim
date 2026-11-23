@@ -64,6 +64,7 @@ import { orderLots, orderMoves } from "../js/dispatch.js";
 import { EQ_STATES, Equipment, eqBlocksStart } from "../js/equip.js";
 import { buildKpi, buildKpiFromSession, shiftTarget } from "../js/kpi.js";
 import { V13_COPY_KEYS } from "../js/v13-i18n.js";
+import { FRAME_BUDGET, castsShadow, selectWorkLights } from "../js/frame-budget.js";
 import { buildYield, isFinalTest } from "../js/yield.js";
 import { afterActionFigures, buildAfterAction, scenariosForProduct } from "../js/scenario.js";
 import { V11_COPY_KEYS } from "../js/v11-i18n.js";
@@ -2074,6 +2075,52 @@ check(
     "target versus actual is on the shift card",
     readFileSync(new URL("../index.html", import.meta.url), "utf8").includes('id="kpi-target"') &&
       readFileSync(new URL("../js/ui.js", import.meta.url), "utf8").includes("kpiTargetActual")
+  );
+}
+
+{
+  const lights = [
+    { id: "A", x: 0, z: 0 },
+    { id: "C", x: 3, z: 1 },
+    { id: "E", x: -4, z: 2 },
+    { id: "B", x: 10, z: 0 },
+    { id: "D", x: 30, z: 0 },
+  ];
+  const picked = selectWorkLights(lights, { x: 0, z: 0 }, FRAME_BUDGET.workLights, "D");
+  check(
+    "work lights stay on a fixed budget and keep the tool in hand",
+    FRAME_BUDGET.workLights === 4 &&
+      picked.length === 4 &&
+      picked.includes("D") &&
+      picked.includes("A") &&
+      picked.includes("C") &&
+      picked.includes("E") &&
+      !picked.includes("B")
+  );
+  check(
+    "a short tool list does not invent extra work lights",
+    selectWorkLights([{ id: "A", x: 0, z: 0 }], { x: 1, z: 1 }, 4, null).join(",") === "A"
+  );
+  check(
+    "small fittings do not cast shadows and tool bodies still do",
+    castsShadow(0.2) === false && castsShadow(0.79) === false && castsShadow(FRAME_BUDGET.shadowMinExtent) === true && castsShadow(1.6) === true
+  );
+  const plantSrc = readFileSync(new URL("../js/plant.js", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../css/app.css", import.meta.url), "utf8");
+  check(
+    "the view caps pixel ratio and does not use a soft shadow map",
+    FRAME_BUDGET.maxPixelRatio <= 1.5 &&
+      FRAME_BUDGET.shadowMapSize <= 1024 &&
+      FRAME_BUDGET.shadowMapSize >= 512 &&
+      plantSrc.includes("FRAME_BUDGET.maxPixelRatio") &&
+      plantSrc.includes("PCFShadowMap") &&
+      !plantSrc.includes("PCFSoftShadowMap") &&
+      plantSrc.includes("selectWorkLights") &&
+      plantSrc.includes("rec.point.visible = false")
+  );
+  check(
+    "hud panels do not blur the live canvas",
+    !css.includes("backdrop-filter: blur") && !css.includes("mix-blend-mode")
   );
 }
 
