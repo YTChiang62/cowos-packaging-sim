@@ -11,8 +11,11 @@ import { FACILITY_ROOMS, OVERVIEW_CAMERA, PLANT_FLOOR, PLANT_WALLS, RETURN_AIR, 
 import { applyTheme, paintFloor, readThemeId } from "./themes.js";
 import { buildFacilityShell, makeBillboard, makeFlatTag } from "./shell.js";
 import { CompanionLayer, OpsView } from "./ops-view.js";
+import { FRAME_BUDGET, castsShadow, selectWorkLights } from "./frame-budget.js";
 
 const BAYS = PARKS;
+
+const STATUS_RANK = { HOLD: 6, DOWN: 5, ASSIST: 4, QUAL: 3, PM: 3, RUN: 2, QUEUE: 1 };
 
 const BAY_ACCENT = {
   m1: 0xd3925a,
@@ -45,7 +48,7 @@ function makeFloorTexture(palette) {
     returns: RETURN_AIR,
   });
   const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = 8;
+  tex.anisotropy = 4;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -134,10 +137,10 @@ export class Plant {
     this._shown = null;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, FRAME_BUDGET.maxPixelRatio));
     this.renderer.setSize(canvas.clientWidth || innerWidth, canvas.clientHeight || innerHeight, false);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -173,6 +176,19 @@ export class Plant {
     this._opsLayers = null;
     this.selectedLotId = null;
     this._followVec = new THREE.Vector3();
+    this._desired = new THREE.Vector3();
+    this._lotOffset = new THREE.Vector3(6, 5.5, 7);
+    this._craneOffset = new THREE.Vector3(8, 7, 9);
+    this._craneTarget = new THREE.Vector3();
+    this._workAnchors = [];
+    this._litKey = "";
+    this._litX = Number.NaN;
+    this._litZ = Number.NaN;
+    this._litPin = null;
+    this._frameSnap = null;
+    this._detail = "near";
+    this._detailMeshes = [];
+    this.accentLight = null;
 
     this._buildWorld();
     this._buildBays();
@@ -211,6 +227,10 @@ export class Plant {
     this._bindWalkInput();
     applyTheme(this, readThemeId(browserStore()));
     this.showLot("bank", TOOLS[0].id, "FOUP");
+    this._tuneShadows();
+    this._collectDetail();
+    this.scene.updateMatrixWorld(true);
+    this.scene.matrixAutoUpdate = false;
     this.resize();
   }
 
@@ -521,7 +541,7 @@ export class Plant {
     const sun = new THREE.DirectionalLight(0xffffff, 1);
     sun.position.set(24, 40, 18);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(FRAME_BUDGET.shadowMapSize, FRAME_BUDGET.shadowMapSize);
     sun.shadow.camera.near = 2;
     sun.shadow.camera.far = 160;
     sun.shadow.camera.left = -110;
@@ -683,9 +703,139 @@ export class Plant {
       const first = FLOW.find((step) => step.tool === tool.id);
       poseTool(this.tools.get(tool.id), motion(first.id, 0, 0), 0);
     }
+    this._freezeTools();
+    this._cacheWorkLights();
     this.opsView = new OpsView(this.scene);
     this.companions = new CompanionLayer(this.scene);
     this._publishOpsAnchors();
+  }
+
+  /**
+   * Static fittings keep their matrix. Only parts poseTool actually moves
+   * stay on the per-frame update path.
+   */
+  _freezeTools() {
+    for (const rec of this.tools.values()) {
+      const moving = new Set();
+      for (const part of Object.values(rec.parts || {})) {
+        if (!part) continue;
+        moving.add(part);
+        if (part === rec.parts.belt) {
+          for (const child of part.children) moving.add(child);
+        }
+      }
+      rec.group.traverse((obj) => {
+        if (moving.has(obj)) return;
+        obj.matrixAutoUpdate = false;
+        obj.updateMatrix();
+      });
+      rec.group.updateMatrixWorld(true);
+    }
+  }
+
+  _cacheWorkLights() {
+    this._workAnchors = [];
+    for (const rec of this.tools.values()) {
+      const at = new THREE.Vector3();
+      rec.workLight.getWorldPosition(at);
+      rec.workLight.visible = false;
+      rec.point.visible = false;
+      rec._pointWorld = rec.point.getWorldPosition(new THREE.Vector3());
+      this._workAnchors.push({ id: rec.id, x: at.x, z: at.z, light: rec.workLight });
+    }
+    this.accentLight = new THREE.PointLight(0xff6b7a, 0, 7);
+    this.accentLight.name = "status-accent";
+    this.scene.add(this.accentLight);
+  }
+
+  _pinnedToolId() {
+    if (this.walking && this.walker.inspectId && this.tools.has(this.walker.inspectId)) return this.walker.inspectId;
+    const stationId = this.solo?.stationId || this.live?.stationId;
+    if (!stationId) return null;
+    return stationById(stationId)?.tool || null;
+  }
+
+  _placeAccent(rec) {
+    const accent = this.accentLight;
+    if (!accent) return;
+    if (!rec?._pointWorld) {
+      accent.intensity = 0;
+      return;
+    }
+    let intensity = rec.point?.intensity || 0;
+    if (rec.status === "HOLD" || rec.status === "DOWN") intensity = 1.2 + Math.sin(this.t * 6) * 0.8;
+    else if (this.walking && rec.id === this.walker.inspectId) intensity = Math.max(intensity, 2.1);
+    accent.color.copy(rec.point.color);
+    accent.intensity = intensity;
+    accent.position.copy(rec._pointWorld);
+  }
+
+  _budgetWorkLights() {
+    if (!this._workAnchors.length) return;
+    const target = this.controls.target;
+    const pinned = this._pinnedToolId();
+    const dx = target.x - this._litX;
+    const dz = target.z - this._litZ;
+    if (this._litKey && pinned === this._litPin && dx * dx + dz * dz < 4) return;
+    const ids = selectWorkLights(this._workAnchors, target, FRAME_BUDGET.workLights, pinned);
+    const key = ids.join(",");
+    this._litX = target.x;
+    this._litZ = target.z;
+    this._litPin = pinned;
+    if (key === this._litKey) return;
+    this._litKey = key;
+    const on = new Set(ids);
+    for (const anchor of this._workAnchors) anchor.light.visible = on.has(anchor.id);
+  }
+
+  _keptDetail(obj) {
+    let node = obj;
+    while (node) {
+      if (node.userData?.detail === "keep") return true;
+      node = node.parent;
+    }
+    return false;
+  }
+
+  _collectDetail() {
+    this._detailMeshes = [];
+    this.scene.traverse((obj) => {
+      if (!obj.isMesh || !obj.geometry || obj.userData.toolId || this._keptDetail(obj)) return;
+      if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+      const box = obj.geometry.boundingBox;
+      if (!box) return;
+      const extent = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+      if (extent < 0.22) this._detailMeshes.push(obj);
+    });
+  }
+
+  _applyDetail(camY) {
+    const far = camY > 30 ? true : camY < 24 ? false : this._detail === "far";
+    const next = far ? "far" : "near";
+    if (next === this._detail) return;
+    this._detail = next;
+    const visible = next === "near";
+    for (const mesh of this._detailMeshes) mesh.visible = visible;
+  }
+
+  _tuneShadows() {
+    this.scene.traverse((obj) => {
+      if (!obj.isMesh || !obj.geometry) return;
+      const material = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+      if (material?.transparent && material.opacity < 0.85) {
+        obj.castShadow = false;
+        obj.receiveShadow = false;
+        return;
+      }
+      if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+      const box = obj.geometry.boundingBox;
+      if (!box) return;
+      const extent = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+      if (!castsShadow(extent)) {
+        obj.castShadow = false;
+        obj.receiveShadow = false;
+      }
+    });
   }
 
   _publishOpsAnchors() {
@@ -932,8 +1082,8 @@ export class Plant {
 
   pick(clientX, clientY) {
     this._aimPointer(clientX, clientY);
-    const hits = [...this.tools.values()].map((r) => r.hit);
-    const found = this.raycaster.intersectObjects(hits, false)[0];
+    if (!this._hits) this._hits = [...this.tools.values()].map((r) => r.hit);
+    const found = this.raycaster.intersectObjects(this._hits, false)[0];
     return found?.object.userData.toolId || null;
   }
 
@@ -1014,7 +1164,7 @@ export class Plant {
     const facility = this.session?.facility;
     if (!facility || !this.view) return;
     this.facilityBound = true;
-    const snap = facility.snapshot();
+    const snap = this._frameSnap || facility.snapshot();
     this._snap = snap;
     const soloTool = this.solo ? stationById(this.solo.stationId)?.tool : null;
     if (this.mode !== "solo" && this.mode !== "soloHold") this.carrier.visible = false;
@@ -1083,14 +1233,14 @@ export class Plant {
       if (k >= 1) this._camTween = null;
     } else if (this.follow === "lot" || this.follow === true) {
       const target = this._followTarget();
-      const desired = target.clone().add(new THREE.Vector3(6, 5.5, 7));
+      const desired = this._desired.copy(target).add(this._lotOffset);
       this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
       this.controls.target.lerp(target, 1 - Math.pow(0.001, dt));
       this.camera.lookAt(this.controls.target);
     } else if (this.follow === "crane" && this._snap?.vehicles?.length) {
       const active = this._snap.vehicles.find((v) => v.state !== "idle" && v.state !== "paused") || this._snap.vehicles[0];
-      const target = new THREE.Vector3(active.x, 2.4, active.z);
-      const desired = target.clone().add(new THREE.Vector3(8, 7, 9));
+      const target = this._craneTarget.set(active.x, 2.4, active.z);
+      const desired = this._desired.copy(target).add(this._craneOffset);
       this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
       this.controls.target.lerp(target, 1 - Math.pow(0.001, dt));
       this.camera.lookAt(this.controls.target);
@@ -1116,10 +1266,20 @@ export class Plant {
       this._apply(this.live.stationId, this.live.t, this.live.fault);
     }
 
+    let accentRec = null;
+    let accentRank = 0;
+    const camY = this.camera.position.y;
+    this._applyDetail(camY);
+    const labelOpacity = camY > 22 ? Math.max(0, 1 - (camY - 22) / 10) : 1;
+    const labelOn = labelOpacity > 0.08;
     for (const rec of this.tools.values()) {
+      const rank = STATUS_RANK[rec.status] || 0;
+      if (rank > accentRank) {
+        accentRank = rank;
+        accentRec = rec;
+      }
       if (rec.status === "HOLD") {
         rec.lights.red.emissiveIntensity = 0.55 + Math.sin(this.t * 6) * 0.7;
-        rec.point.intensity = 1.5 + Math.sin(this.t * 6) * 1.1;
       } else if (rec.status === "RUN") {
         rec.lights.grn.emissiveIntensity = 0.7 + Math.sin(this.t * 3) * 0.35;
       } else if (rec.status === "ASSIST") {
@@ -1132,19 +1292,25 @@ export class Plant {
         if (rec.lights.blu) rec.lights.blu.emissiveIntensity = 0.35 + Math.sin(this.t * 4) * 0.3;
         rec.lights.yel.emissiveIntensity = 0.35 + Math.sin(this.t * 4) * 0.25;
       }
-      if (this.walking && rec.id === this.walker.inspectId) {
-        rec.point.intensity = Math.max(rec.point.intensity, 2.1);
+      if (this.walking && rec.id === this.walker.inspectId && accentRank < 4) {
+        accentRank = 4;
+        accentRec = rec;
       }
-      const camY = this.camera.position.y;
-      const labelOpacity = camY > 22 ? Math.max(0, 1 - (camY - 22) / 10) : 1;
-      rec.label.material.opacity = labelOpacity;
-      rec.label.visible = labelOpacity > 0.08;
+      if (rec._labelOpacity !== labelOpacity) {
+        rec._labelOpacity = labelOpacity;
+        rec.label.material.opacity = labelOpacity;
+        rec.label.visible = labelOn;
+      }
     }
-    const camY = this.camera.position.y;
+    this._placeAccent(accentRec);
     const signOpacity = camY > 28 ? Math.max(0, 1 - (camY - 28) / 16) : 1;
-    for (const sign of this.billboards || []) {
-      sign.material.opacity = signOpacity;
-      sign.visible = signOpacity > 0.05;
+    if (this._signOpacity !== signOpacity) {
+      this._signOpacity = signOpacity;
+      const signOn = signOpacity > 0.05;
+      for (const sign of this.billboards || []) {
+        sign.material.opacity = signOpacity;
+        sign.visible = signOn;
+      }
     }
 
     this.opsView?.pose({
@@ -1153,6 +1319,7 @@ export class Plant {
       nearbyTool: this.walking ? this.walker.inspectId : this.opsFocus,
     });
     this.companions?.pose(dt);
+    this._budgetWorkLights();
 
     this.renderer.render(this.scene, this.camera);
   }

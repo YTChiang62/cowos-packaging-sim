@@ -246,8 +246,8 @@ export class FacilityView {
       view.cable.position.y = -0.25 - (drop - 0.2) / 2;
       const moving = vehicle.state !== "idle" && vehicle.state !== "paused";
       view.group.children[0].material.emissiveIntensity = moving ? 0.55 : 0.16;
+      view.group.updateWorldMatrix(true, true);
     }
-    this.scene.updateMatrixWorld(true);
 
     const slotCount = new Map();
     for (const carrier of snap.carriers) {

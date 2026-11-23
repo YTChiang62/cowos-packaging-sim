@@ -166,12 +166,25 @@ export class OpsView {
     chips.forEach((chip, index) => {
       this.entries[index].chip = chip;
     });
+    this._rev = (this._rev || 0) + 1;
     this.pose(this._ctx || { walking: false, camY: 110, nearbyTool: null });
   }
 
   pose(ctx) {
     this._ctx = ctx || this._ctx || { walking: false, camY: 110, nearbyTool: null };
     if (!this.snapshot) return;
+    const layers = this.layers || {};
+    const layerKey = `${layers.load ? 1 : 0}${layers.alarm ? 1 : 0}${layers.queue ? 1 : 0}${layers.current ? 1 : 0}`;
+    const camY = this._ctx.camY ?? 110;
+    const walking = !!this._ctx.walking;
+    const overview = camY > 36 && !walking;
+    const band = overview ? "o" : walking ? "w" : "m";
+    const nearby = this._ctx.nearbyTool || "";
+    const poseKey = `${this._rev || 0}|${layerKey}|${band}|${nearby}`;
+    if (poseKey === this._poseKey) return;
+    this._poseKey = poseKey;
+    this._layerKey = layerKey;
+    this._band = band;
     for (const entry of this.entries) this._place(entry, this._ctx);
   }
 
@@ -207,29 +220,52 @@ export class OpsView {
   }
 
   _place(entry, ctx) {
-    const spec = this._spec(entry, ctx);
     const chip = entry.chip;
-    const walking = !!ctx.walking;
-    const camY = ctx.camY ?? 110;
-    const sig = [
-      spec.title,
-      spec.load,
-      spec.showLoad ? 1 : 0,
-      spec.showAlarm ? 1 : 0,
-      spec.showQueue ? 1 : 0,
-      spec.queueLabel,
-      spec.reason,
-      spec.accent,
-      spec.rich ? 1 : 0,
+    const nearby = ctx.nearbyTool || "";
+    const token = [
+      chip.kind,
+      chip.id,
+      chip.load,
+      chip.queue,
+      chip.alarm ? 1 : 0,
+      chip.eq || "",
+      chip.current ? 1 : 0,
+      chip.alarmReason || "",
+      chip.material ? 1 : 0,
+      chip.bay || "",
+      nearby,
+      this._layerKey || "",
     ].join("|");
-    if (sig !== entry.sig) {
-      entry.sig = sig;
-      entry.rich = spec.rich;
-      paint(entry.sprite, spec);
+    const richBand = !!(chip.kind === "tool" && nearby && nearby === chip.id);
+    const band = `${this._band || "m"}${richBand ? "r" : ""}`;
+    if (token === entry.token && band === entry.band) return;
+    const spec = token === entry.token ? entry.spec : this._spec(entry, ctx);
+    if (token !== entry.token) {
+      entry.token = token;
+      entry.spec = spec;
+      const sig = [
+        spec.title,
+        spec.load,
+        spec.showLoad ? 1 : 0,
+        spec.showAlarm ? 1 : 0,
+        spec.showQueue ? 1 : 0,
+        spec.queueLabel,
+        spec.reason,
+        spec.accent,
+        spec.rich ? 1 : 0,
+      ].join("|");
+      if (sig !== entry.sig) {
+        entry.sig = sig;
+        entry.rich = spec.rich;
+        paint(entry.sprite, spec);
+      }
     }
+    entry.band = band;
     entry.sprite.visible = spec.parts.visible;
     if (!spec.parts.visible) return;
 
+    const walking = !!ctx.walking;
+    const camY = ctx.camY ?? 110;
     const overview = camY > 36 && !walking;
     const plateH = entry.sprite.userData.plateH || 210;
     if (chip.kind === "bay") {
@@ -274,6 +310,7 @@ function makeCompanionMesh(slot) {
   cap.position.y = 0.09;
   group.add(wafer, die, cap);
   group.userData.die = die;
+  group.userData.detail = "keep";
   return group;
 }
 
@@ -326,12 +363,17 @@ export class CompanionLayer {
 
   pose(dt) {
     const k = Math.min(1, (dt || 0) * 1.8);
+    if (k <= 0) return;
     for (const mesh of this.meshes) {
       const goal = mesh.userData.goal;
       if (!mesh.visible || !goal) continue;
-      mesh.position.x += (goal.x - mesh.position.x) * k;
-      mesh.position.y += (goal.y - mesh.position.y) * k;
-      mesh.position.z += (goal.z - mesh.position.z) * k;
+      const dx = goal.x - mesh.position.x;
+      const dy = goal.y - mesh.position.y;
+      const dz = goal.z - mesh.position.z;
+      if (dx * dx + dy * dy + dz * dz < 1e-6) continue;
+      mesh.position.x += dx * k;
+      mesh.position.y += dy * k;
+      mesh.position.z += dz * k;
     }
   }
 
