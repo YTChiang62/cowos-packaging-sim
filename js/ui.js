@@ -60,6 +60,7 @@ export function renderAll(lang, session, els) {
   document.documentElement.lang = lang === "en" ? "en" : lang === "zh-CN" ? "zh-Hans" : "zh-Hant";
   els.btnLang.textContent = LANG_LABEL[lang];
   paintProduct(lang, session);
+  paintVoice(lang, session);
   if (!session) return;
   const snap = session.snapshot();
   renderLot(lang, session, snap, els);
@@ -80,6 +81,20 @@ export function renderAll(lang, session, els) {
     assist.hidden = eq !== "ASSIST";
   }
   renderDispatch(lang, session);
+}
+
+function paintVoice(lang, session) {
+  const on = session?.voice ? session.voice.enabled !== false : true;
+  const text = session?.voice?.caption || "";
+  document.querySelectorAll("[data-voice-toggle]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(on));
+    const label = t(lang, on ? "voiceOn" : "voiceOff");
+    if (btn.textContent !== label) btn.textContent = label;
+  });
+  for (const id of ["lot-narration", "ops-narration"]) {
+    const el = document.getElementById(id);
+    if (el && el.textContent !== text) el.textContent = text;
+  }
 }
 
 function paintProduct(lang, session) {

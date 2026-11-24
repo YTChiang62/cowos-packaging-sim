@@ -46,6 +46,16 @@ import {
   wallSolids,
 } from "../js/walk.js";
 import { productById } from "../js/catalog.js";
+import { moduleById, stageById } from "../js/route.js";
+import {
+  FALLBACK_READ_SEC,
+  createFakeSynth,
+  createNarration,
+  narrationScript,
+  requiredNarrationIds,
+  selectVoice,
+  speechRateFor,
+} from "../js/narration.js";
 import {
   HUD_PANELS,
   HUD_STORAGE_KEY,
@@ -2121,6 +2131,225 @@ check(
   check(
     "hud panels do not blur the live canvas",
     !css.includes("backdrop-filter: blur") && !css.includes("mix-blend-mode")
+  );
+}
+
+{
+  const femaleVoices = [
+    { name: "Microsoft David", lang: "en-US", gender: "male" },
+    { name: "Microsoft Zira", lang: "en-US", gender: "female" },
+    { name: "Microsoft Kangkang", lang: "zh-CN", gender: "male" },
+    { name: "Microsoft Huihui", lang: "zh-CN", gender: "female" },
+    { name: "Microsoft Zhiwei", lang: "zh-TW", gender: "male" },
+    { name: "Microsoft Hanhan", lang: "zh-TW", gender: "female" },
+  ];
+  check("english narration prefers a female english voice", selectVoice(femaleVoices, "en")?.name === "Microsoft Zira");
+  check("simplified narration prefers a female zh-CN voice", selectVoice(femaleVoices, "zh-CN")?.name === "Microsoft Huihui");
+  check("traditional narration prefers a female zh-TW voice", selectVoice(femaleVoices, "zh-TW")?.name === "Microsoft Hanhan");
+  check(
+    "pace nudges speech rate without shortening the line",
+    speechRateFor(0.5) < 1 && speechRateFor(0.5) >= 0.9 &&
+      speechRateFor(1) === 1 &&
+      speechRateFor(4) > 1 && speechRateFor(4) <= 1.2
+  );
+
+  function scriptsOk(product) {
+    const problems = [];
+    for (const step of product.flow) {
+      const en = narrationScript("en", step, product);
+      const tw = narrationScript("zh-TW", step, product);
+      const cn = narrationScript("zh-CN", step, product);
+      const stepEn = t("en", "step_" + step.id);
+      const stage = stageById(step.stage);
+      const mod = moduleById(step.module);
+      if (!en || !tw || !cn) problems.push(`${step.id} empty`);
+      if (en.includes("\u4e00") || /[\u4e00-\u9fff]/.test(en)) problems.push(`${step.id} english has han`);
+      if (!en.includes(stepEn) || !en.includes(step.tool) || !en.includes(step.code)) problems.push(`${step.id} english labels`);
+      if (stage && !en.includes(stage.name[2])) problems.push(`${step.id} english stage`);
+      if (mod && !en.includes(mod.name[2])) problems.push(`${step.id} english module`);
+      if (!tw.includes(t("zh-TW", "step_" + step.id)) || !tw.includes("機台")) problems.push(`${step.id} zh-TW`);
+      if (!cn.includes(t("zh-CN", "step_" + step.id)) || !cn.includes("机台")) problems.push(`${step.id} zh-CN`);
+      if (en === tw || tw === cn) problems.push(`${step.id} languages collapsed`);
+      if (en !== narrationScript("en", step, product)) problems.push(`${step.id} unstable`);
+    }
+    return problems;
+  }
+
+  for (const id of ["HBX-100", "HBX-240"]) {
+    const product = productById(id);
+    const problems = scriptsOk(product);
+    check(
+      `${id} has an english script for every runnable step`,
+      product.flow.length === 86 && problems.length === 0
+    );
+    if (problems.length) console.error(problems.slice(0, 8).join("\n"));
+  }
+  const s12 = productById("HBX-S12");
+  const s12Problems = scriptsOk(s12);
+  const s12Ids = new Set(requiredNarrationIds(s12));
+  const skipped = FLOW.filter((step) => step.module === "m1" || step.module === "m3");
+  check(
+    "HBX-S12 narrates only its runnable steps and skips M1 and M3",
+    s12Problems.length === 0 &&
+      s12Ids.size === s12.flow.length &&
+      skipped.length > 0 &&
+      skipped.every((step) => !s12Ids.has(step.id)) &&
+      !s12Ids.has("s111") &&
+      !s12Ids.has("s324")
+  );
+  if (s12Problems.length) console.error(s12Problems.slice(0, 8).join("\n"));
+
+  function untilVoiceHold(session, synth, max = 40000) {
+    let n = 0;
+    while (!session._voiceHold && session.status !== "DONE" && session.status !== "HOLD" && n < max) {
+      if (session.hold) break;
+      session.tick(0.05);
+      n += 1;
+    }
+    return n < max && !!session._voiceHold;
+  }
+
+  const spoken = createFakeSynth(femaleVoices);
+  const spokenVoice = createNarration(spoken);
+  const auto = new Session({ intensity: "none", voice: spokenVoice, lang: "en" });
+  auto.setSpeed(4);
+  auto.armNarration();
+  const firstText = narrationScript("en", auto.step(), auto.product);
+  check(
+    "narration starts once per step and keeps the full english line at 4×",
+    spoken.speakCount === 1 &&
+      spokenVoice.lastText === firstText &&
+      spokenVoice.lastRate === speechRateFor(4) &&
+      spokenVoice.lastLang === "en-US" &&
+      spokenVoice.lastVoice === "Microsoft Zira"
+  );
+  for (let i = 0; i < 30; i += 1) auto.tick(0.016);
+  check("ticks do not rebuild the utterance", spoken.speakCount === 1 && spokenVoice.speakCount === 1);
+  auto.chooseRun("auto");
+  check("auto-run reaches the speech gate on the first step", untilVoiceHold(auto, spoken));
+  const gated = auto.step().id;
+  auto.tick(0.25);
+  check("auto-run does not advance while the step is still being spoken", auto._voiceHold && auto.stepIndex === 0 && auto.step().id === gated && auto.busy);
+  auto.setLang("zh-CN");
+  check(
+    "a language switch restarts the same step in simplified Chinese",
+    spokenVoice.gateLang === "zh-CN" &&
+      spokenVoice.lastLang === "zh-CN" &&
+      spokenVoice.lastText.includes(t("zh-CN", "step_" + gated)) &&
+      spokenVoice.lastText.includes("机台") &&
+      spokenVoice.gateDone === false &&
+      auto.stepIndex === 0
+  );
+  auto.setLang("en");
+  check(
+    "switching back to english restarts the english script",
+    spokenVoice.lastLang === "en-US" &&
+      spokenVoice.lastText.includes(t("en", "step_" + gated)) &&
+      !/[\u4e00-\u9fff]/.test(spokenVoice.lastText) &&
+      spokenVoice.gateDone === false &&
+      auto.step().id === gated
+  );
+  spoken.end();
+  auto.tick(0.05);
+  check("the next step starts only after english speech ends", auto.stepIndex === 1 && !auto._voiceHold);
+
+  const steppedSynth = createFakeSynth(femaleVoices);
+  const steppedVoice = createNarration(steppedSynth);
+  const stepped = new Session({ intensity: "none", voice: steppedVoice, lang: "en", awaitChoice: true });
+  stepped.armNarration();
+  stepped.chooseRun("step");
+  check("step mode narrates when the step begins", steppedSynth.speakCount === 1 && steppedVoice.lastText.includes(t("en", "step_" + stepped.step().id)));
+  stepped.advance();
+  check("step mode waits at the speech gate", untilVoiceHold(stepped, steppedSynth) && stepped.stepIndex === 0 && stepped.busy);
+  check("step mode does not accept the next step while speech is open", stepped.advance() === false && stepped.stepIndex === 0);
+  steppedSynth.end();
+  stepped.tick(0.05);
+  check(
+    "step mode enables the next step only after speech ends",
+    stepped.stepIndex === 1 && stepped.auto === false && stepped.busy === false && steppedSynth.speakCount === 1
+  );
+
+  const muteSynth = createFakeSynth(femaleVoices);
+  const muteVoice = createNarration(muteSynth);
+  const muted = new Session({ intensity: "none", voice: muteVoice, lang: "zh-TW" });
+  check("voice defaults on", muteVoice.enabled === true);
+  muted.armNarration();
+  muted.chooseRun("auto");
+  check("mute target reaches the gate", untilVoiceHold(muted, muteSynth));
+  muted.setVoice(false);
+  check(
+    "mute cancels speech and skips the wait",
+    muteVoice.enabled === false &&
+      muteSynth.speaking === false &&
+      muted.stepIndex === 1 &&
+      !muted._voiceHold
+  );
+
+  const stopSynth = createFakeSynth(femaleVoices);
+  const stopVoice = createNarration(stopSynth);
+  const stopped = new Session({ intensity: "none", voice: stopVoice, lang: "en" });
+  stopped.armNarration();
+  stopped.chooseRun("auto");
+  check("stop sees speech in progress", stopSynth.speaking === true);
+  stopped.setAuto(false);
+  check("stopping the run cancels speech and stays on the step", stopSynth.speaking === false && stopVoice.interrupted === true && stopped.stepIndex === 0);
+
+  const silent = createNarration(null);
+  const quiet = new Session({ intensity: "none", voice: silent, lang: "en" });
+  quiet.armNarration();
+  silent._need = 30;
+  silent._acc = 0;
+  silent.gateDone = false;
+  quiet.chooseRun("auto");
+  check(
+    "a silent browser shows the english explanation",
+    silent.mode === "fallback" &&
+      quiet.snapshot().narration.includes(t("en", "step_" + quiet.step().id)) &&
+      !/[\u4e00-\u9fff]/.test(quiet.snapshot().narration)
+  );
+  check("silent fallback reaches a readable hold", untilVoiceHold(quiet, null));
+  const quietAt = quiet.stepIndex;
+  quiet.tick(0.2);
+  check("silent fallback does not release before the read or a continue", quiet.stepIndex === quietAt && quiet._voiceHold);
+  check("the reader can continue a silent step", quiet.advance() === true && quiet.stepIndex === quietAt + 1);
+  const timed = createNarration(null);
+  timed.speakStep(productById("HBX-100").flow[0], productById("HBX-100"), "en", 1);
+  timed.tick(1);
+  check("fallback read is not finished halfway", timed.gateDone === false);
+  timed.tick(FALLBACK_READ_SEC + 2);
+  check("fallback read opens the gate without audio", timed.doneFor("s111", "en") === true);
+
+  const holdSynth = createFakeSynth(femaleVoices);
+  const holdVoice = createNarration(holdSynth);
+  const blocked = new Session({ intensity: "many", role: "PE", voice: holdVoice, lang: "zh-TW" });
+  blocked.armNarration();
+  blocked.chooseRun("auto");
+  let holdGuard = 0;
+  while (!blocked.hold && blocked.status !== "DONE" && holdGuard < 80000) {
+    if (blocked._voiceHold) holdSynth.end();
+    blocked.tick(0.05);
+    holdGuard += 1;
+  }
+  check(
+    "an open hold is not auto-advanced when narration is muted",
+    !!blocked.hold && blocked.step().id === blocked.hold.stationId && (holdVoice.paused || !holdSynth.speaking)
+  );
+  const heldId = blocked.step().id;
+  blocked.setVoice(false);
+  blocked.tick(0.4);
+  check("mute during a hold stays on the held step", blocked.hold && blocked.step().id === heldId && holdSynth.speaking === false);
+
+  const page = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  check(
+    "voice control defaults on and crane labels stay 自動派車 / 手動叫車 / 暫停",
+    page.includes('data-voice-toggle') &&
+      page.includes('aria-pressed="true"') &&
+      page.includes(">開</button>") &&
+      page.includes("自動派車") &&
+      page.includes("手動叫車") &&
+      page.includes("暫停") &&
+      t("zh-TW", "voiceLabel") === "語音" &&
+      t("en", "voiceOn") === "On"
   );
 }
 

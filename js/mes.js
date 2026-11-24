@@ -52,7 +52,7 @@ function makeLot(product) {
 }
 
 export class Session {
-  constructor({ intensity = "few", role = "MFG", productId = "HBX-100", awaitChoice = false, scenario = null } = {}) {
+  constructor({ intensity = "few", role = "MFG", productId = "HBX-100", awaitChoice = false, scenario = null, voice = null, lang = "zh-TW" } = {}) {
     this.product = productById(productId) || productById("HBX-100");
     this.flow = this.product.flow;
     this.intensity = intensity;
@@ -98,6 +98,10 @@ export class Session {
     this._awaitingTransport = false;
     this._chain = false;
     this.processProgress = 0;
+    this.voice = voice || null;
+    this.lang = lang || "zh-TW";
+    this.narrationArmed = false;
+    this._voiceHold = false;
     if (this.scenario === "kgd") this._seedKgdHold();
     if (this.scenario === "overlay" || this.scenario === "warpage") this._seedScenarioHold(this.scenario);
   }
@@ -209,6 +213,9 @@ export class Session {
       dispatchRule: this.dispatchRule,
       hotLots: [...this.hotLots],
       outcome: this.lot.outcome || null,
+      voiceOn: this.voice ? this.voice.enabled !== false : true,
+      narration: this.voice?.caption || "",
+      voiceHold: this._voiceHold,
     };
   }
 
@@ -279,6 +286,56 @@ export class Session {
     this.change();
   }
 
+  /** Start speaking the current step. Seeding a scenario does not arm this. */
+  armNarration() {
+    this.narrationArmed = true;
+    this._speakStep(false);
+    this.change();
+  }
+
+  setLang(lang) {
+    const next = lang || "zh-TW";
+    if (this.lang === next) return;
+    this.lang = next;
+    if (this.narrationArmed) this._speakStep(true);
+    this.change();
+  }
+
+  setVoice(on) {
+    if (!this.voice) return;
+    this.voice.setEnabled(!!on);
+    if (!on && this._voiceHold) {
+      this._voiceHold = false;
+      this.busy = false;
+      this._completeTrackOut();
+      return;
+    }
+    if (on && this.narrationArmed && !this._terminal()) this._speakStep(true);
+    this.change();
+  }
+
+  _speakStep(force) {
+    if (!this.narrationArmed || !this.voice || this._terminal()) return;
+    this.voice.speakStep(this.step(), this.product, this.lang, this.speed, { force: !!force });
+  }
+
+  _awaitVoice() {
+    if (!this.narrationArmed || !this.voice || this.voice.enabled === false) return false;
+    if (this.voice.doneFor(this.step().id, this.lang)) return false;
+    if (this.voice.interrupted && !this.auto) return false;
+    if (this.voice.paused) this.voice.resume();
+    if (!this.voice.speaking && this.voice.mode !== "fallback") this._speakStep(true);
+    this._voiceHold = true;
+    if (this.voice.mode === "fallback") {
+      this.busy = false;
+      this.status = "QUEUE";
+    } else {
+      this.busy = true;
+      this.status = "RUN";
+    }
+    return true;
+  }
+
   chooseRun(mode) {
     if (mode !== "auto" && mode !== "step") return false;
     if (this._terminal()) return false;
@@ -294,12 +351,29 @@ export class Session {
   setAuto(on) {
     if (this._terminal() || this.runChoice == null) return;
     this.auto = on;
+    if (!on && this.voice) {
+      this.voice.halt();
+      if (this._voiceHold) {
+        this._voiceHold = false;
+        this.busy = false;
+        this.status = "QUEUE";
+      }
+    }
     if (on && this.facility.mode !== "PAUSE") this.facility.setMode("AUTO");
-    if (on && !this.busy && !this.hold) this.advance();
+    if (on && !this.busy && !this.hold && !this._voiceHold) this.advance();
     this.change();
   }
 
   advance() {
+    if (this._voiceHold) {
+      if (this.voice?.mode === "fallback") {
+        this.voice.finish();
+        this._voiceHold = false;
+        this._completeTrackOut();
+        return true;
+      }
+      return false;
+    }
     if (this.runChoice == null) {
       this.emit("toast", { key: "needRunChoice" });
       return false;
@@ -314,20 +388,24 @@ export class Session {
     }
     if (this.busy) return false;
     this._chain = this.mode === "station" || this.auto;
+    if (this.narrationArmed && this.voice?.paused && this.voice.speaking) this.voice.resume();
+    if (this.narrationArmed) this._speakStep(false);
     this._startBeat();
     return true;
   }
 
   prevBeat() {
-    if (this.busy || this.hold || this._terminal()) return false;
+    if (this.busy || this.hold || this._terminal() || this._voiceHold) return false;
     if (this.mode !== "beat") return false;
     if (this.beatIndex <= 0 && this.stepIndex <= 0) return false;
+    const prevId = this.step().id;
     if (this.beatIndex > 0) this.beatIndex -= 1;
     else {
       this.stepIndex -= 1;
       this.beatIndex = 0;
     }
     this.status = this.beatIndex === 0 ? "QUEUE" : "RUN";
+    if (this.narrationArmed && this.step().id !== prevId) this._speakStep(true);
     this.change();
     return true;
   }
@@ -403,6 +481,7 @@ export class Session {
     this.busy = true;
     this.status = "QUEUE";
     this.processProgress = 0;
+    this.voice?.pause?.();
     this.change();
     this.emit("toast", { key: "eqBlocked", vars: { tool: step.tool, state: eq } });
   }
@@ -455,6 +534,7 @@ export class Session {
     };
     this._acc = 0;
     this._goal = durations[beat] || 0.5;
+    if (beat === "process") this.voice?.resume?.();
     this.change();
     if (beat === "process") {
       const hold = this.peekHold();
@@ -476,6 +556,16 @@ export class Session {
     this.elapsed = (this.elapsed || 0) + scaled;
     this.facility.tick(scaled);
     if (this.status === "SCRAP" || this.lot.outcome === "scrap") return;
+    if (this.narrationArmed && this.voice) this.voice.tick(dt);
+    if (this._voiceHold) {
+      if (this.hold) return;
+      if (!this.voice || this.voice.doneFor(this.step().id, this.lang)) {
+        this._voiceHold = false;
+        this.busy = false;
+        this._completeTrackOut();
+      }
+      return;
+    }
     if (this._awaitingTransport && this.facility.approachDone()) this.transportDone();
     if (this._equipWait) {
       this._stepEquipWait(scaled);
@@ -512,7 +602,9 @@ export class Session {
     this.busy = false;
     this.auto = false;
     this._chain = false;
+    this._voiceHold = false;
     this.status = "HOLD";
+    this.voice?.pause?.();
     this.change();
     this.emit("hold", this.hold);
     this.emit("radio", def.radio);
@@ -571,7 +663,9 @@ export class Session {
       this.beatIndex = 0;
       this.busy = false;
       this._chain = false;
+      this._voiceHold = false;
       this.processProgress = 0;
+      if (this.narrationArmed) this._speakStep(true);
       this.emit("toast", { key: "toastRework", vars: { step: `step_${this.step().id}` } });
       this.change();
       this.emit("resolved", { rework: true });
@@ -625,8 +719,10 @@ export class Session {
     this.busy = false;
     this.auto = false;
     this._chain = false;
+    this._voiceHold = false;
     this._equipWait = null;
     this.status = "SCRAP";
+    this.voice?.halt?.();
     this.emit("toast", { key: "toastScrapLot" });
     this.change();
     this.emit("resolved", { scrap: true });
@@ -658,6 +754,7 @@ export class Session {
       return;
     }
     this.facility.onHoldCleared({ action, stationId, qty: this.lot.goodSites });
+    this.voice?.resume?.();
     this.status = "RUN";
     this.busy = true;
     this._chain = this.mode === "station";
@@ -679,24 +776,8 @@ export class Session {
       this._applyProcessEffects(step);
     }
     if (beat === "track-out") {
-      if (this.stepIndex >= this.flow.length - 1) {
-        this.status = "DONE";
-        this.busy = false;
-        this.auto = false;
-        this._chain = false;
-        this.beatIndex = BEATS.length - 1;
-        this.change();
-        this.emit("complete", this.snapshot());
-        return;
-      }
-      this.stepIndex += 1;
-      this.beatIndex = 0;
-      this.status = "QUEUE";
-      this.busy = false;
-      this.processProgress = 0;
-      this.change();
-      this.emit("tracked", this.snapshot());
-      if (this.auto) this.advance();
+      if (this._awaitVoice()) return;
+      this._completeTrackOut();
       return;
     }
 
@@ -704,6 +785,29 @@ export class Session {
     this.busy = false;
     this.change();
     if (this._chain || this.auto) this.advance();
+  }
+
+  _completeTrackOut() {
+    if (this.stepIndex >= this.flow.length - 1) {
+      this.status = "DONE";
+      this.busy = false;
+      this.auto = false;
+      this._chain = false;
+      this._voiceHold = false;
+      this.beatIndex = BEATS.length - 1;
+      this.change();
+      this.emit("complete", this.snapshot());
+      return;
+    }
+    this.stepIndex += 1;
+    this.beatIndex = 0;
+    this.status = "QUEUE";
+    this.busy = false;
+    this._voiceHold = false;
+    this.processProgress = 0;
+    this.change();
+    this.emit("tracked", this.snapshot());
+    if (this.auto) this.advance();
   }
 
   _applyProcessEffects(step) {

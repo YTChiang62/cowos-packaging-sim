@@ -501,6 +501,7 @@ export class Plant {
     this.dockTo(station.tool, () => {
       if (this.solo && this.solo.stationId === stationId) this.solo.wait = false;
     });
+    this.onSolo?.(true, stationId);
     return true;
   }
 
@@ -511,6 +512,7 @@ export class Plant {
     this.handoff = null;
     this._shown = null;
     this.carrier.visible = false;
+    this.onSolo?.(false, null);
   }
 
   _apply(stationId, t, fault) {

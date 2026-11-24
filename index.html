@@ -83,6 +83,10 @@
         <dd id="lot-morph">—</dd>
       </div>
       <div class="meta span2">
+        <dt data-i18n="narrationLabel">語音說明</dt>
+        <dd id="lot-narration" class="lot-narration"></dd>
+      </div>
+      <div class="meta span2">
         <dt data-i18n="metaSites">站点良品</dt>
         <dd id="lot-sites">—</dd>
       </div>
@@ -112,6 +116,12 @@
       <span data-i18n="autoLabel">自动走线</span>
       <div class="seg">
         <button type="button" id="btn-auto" aria-pressed="false" data-i18n="autoOff">关闭</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <span data-i18n="voiceLabel">語音</span>
+      <div class="seg">
+        <button type="button" id="btn-voice" data-voice-toggle aria-pressed="true" data-i18n="voiceOn">開</button>
       </div>
     </div>
     <div class="genealogy">
@@ -251,6 +261,13 @@
     <h2 id="ops-title" data-i18n="opsTitle">先鬆這一站</h2>
     <p id="ops-advice"></p>
     <div class="ops-stats" id="ops-stats"></div>
+    <div class="toggle-row voice-row">
+      <span data-i18n="voiceLabel">語音</span>
+      <div class="seg">
+        <button type="button" data-voice-toggle aria-pressed="true" data-i18n="voiceOn">開</button>
+      </div>
+    </div>
+    <p id="ops-narration" class="ops-narration"></p>
   </aside>
 
   <div class="ops-layers panel" id="ops-layers" role="group" aria-label="廠況">
