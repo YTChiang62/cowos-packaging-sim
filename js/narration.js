@@ -3,6 +3,8 @@
  * Scripts use the same module, stage, step, carrier, and morph labels as the HUD.
  * Speech is the browser's speechSynthesis. There is no cloud TTS and no extra runtime.
  * A missing engine shows the same line on the traveler and opens the gate after a short read.
+ * Speech mode keeps the live utterance on the narration instance. Chrome can collect
+ * a local utterance or drop onend; tick() then opens the same gate after a generous read.
  */
 
 import { t } from "./i18n.js";
@@ -32,6 +34,37 @@ export function speechRateFor(speed) {
   if (s >= 4) return 1.15;
   if (s >= 2) return 1.08;
   return 1;
+}
+
+const WATCHDOG_MIN_SEC = 8;
+const WATCHDOG_MAX_SEC = 90;
+const WATCHDOG_FACTOR = 1.5;
+const WATCHDOG_PAD_SEC = 3;
+/** ~150 words/min at rate 1, before the generous factor. */
+const EN_SEC_PER_WORD = 0.4;
+/** ~4 characters/sec at rate 1, before the generous factor. */
+const ZH_SEC_PER_CHAR = 0.25;
+
+/**
+ * How long speech mode waits for onend before the step is treated as spoken.
+ * English is estimated per word, Chinese per character, then stretched by 1.5
+ * plus a few seconds. Clamped so a short line cannot expire immediately and a
+ * huge line cannot hold the lot forever.
+ */
+export function speechWatchdogSec(text, lang, rate) {
+  const pace = Math.max(0.5, Number(rate) || 1);
+  const spoken = String(text || "");
+  const english = lang === "en" || String(lang || "").toLowerCase().startsWith("en-");
+  let base;
+  if (english) {
+    const words = spoken.trim() ? spoken.trim().split(/\s+/).length : 1;
+    base = (words * EN_SEC_PER_WORD) / pace;
+  } else {
+    const chars = Array.from(spoken.replace(/\s+/g, "")).length || 1;
+    base = (chars * ZH_SEC_PER_CHAR) / pace;
+  }
+  const padded = base * WATCHDOG_FACTOR + WATCHDOG_PAD_SEC;
+  return Math.min(WATCHDOG_MAX_SEC, Math.max(WATCHDOG_MIN_SEC, padded));
 }
 
 export function voiceScore(voice, lang) {
@@ -141,7 +174,7 @@ function browserSynth() {
 /**
  * Gate plus the speech engine.
  * `doneFor(step, lang)` stays false until the current utterance ends, mute skips it,
- * or the silent-browser read timer elapses.
+ * the speech watchdog elapses, or the silent-browser read timer elapses.
  */
 export class Narration {
   constructor(synth) {
@@ -162,6 +195,9 @@ export class Narration {
     this.lastVoice = "";
     this.oncaption = null;
     this._token = 0;
+    this._endToken = null;
+    this._utter = null;
+    this._watchGate = false;
     this._acc = 0;
     this._need = FALLBACK_READ_SEC;
     this._aside = false;
@@ -220,9 +256,17 @@ export class Narration {
   }
 
   tick(dt) {
-    if (!this.enabled || this.gateDone || this.mode !== "fallback" || this.paused) return;
-    this._acc += Math.max(0, Number(dt) || 0);
-    if (this._acc >= this._need) this.finish();
+    if (!this.enabled || this.gateDone || this.paused) return;
+    const step = Math.max(0, Number(dt) || 0);
+    if (!step) return;
+    if (this.mode === "fallback") {
+      this._acc += step;
+      if (this._acc >= this._need) this.finish();
+      return;
+    }
+    if (this.mode !== "speech" || !this.speaking) return;
+    this._acc += step;
+    if (this._acc >= this._need) this._expireWatchdog();
   }
 
   pause() {
@@ -314,8 +358,13 @@ export class Narration {
       const voice = selectVoice(this.synth.getVoices?.() || [], lang);
       if (voice) utter.voice = voice;
       utter.onend = () => this._ended(token, gate);
-      utter.onerror = () => this._failed(token, gate, text);
+      utter.onerror = (event) => this._onSpeechError(token, gate, event);
       this._stopAudio();
+      // Keep the utterance reachable. Chrome collects a local const and then never fires onend.
+      this._utter = utter;
+      this._watchGate = !!gate;
+      this._acc = 0;
+      this._need = speechWatchdogSec(text, lang, utter.rate);
       this.synth.speak(utter);
       this.speaking = true;
       this.paused = false;
@@ -325,13 +374,28 @@ export class Narration {
       this.lastRate = utter.rate;
       this.lastVoice = voice?.name || "";
     } catch {
+      this._stopAudio();
       if (gate) this._armFallback(text);
       else this._ended(token, false);
     }
   }
 
+  /** onend never arrived. Same release as a finished utterance, for this token only. */
+  _expireWatchdog() {
+    if (!this.speaking || this.gateDone) return;
+    const token = this._token;
+    const gate = this._watchGate;
+    this._stopAudio();
+    this.speaking = false;
+    this.paused = false;
+    this._ended(token, gate);
+  }
+
   _ended(token, gate) {
-    if (token !== this._token) return;
+    if (token !== this._token || this._endToken === token) return;
+    this._endToken = token;
+    this._dropUtterance();
+    this._acc = 0;
     this.speaking = false;
     this.paused = false;
     if (!gate) {
@@ -344,15 +408,27 @@ export class Narration {
     this.gateDone = true;
   }
 
-  _failed(token, gate, text) {
-    if (token !== this._token) return;
-    this.speaking = false;
-    this.paused = false;
-    if (gate) this._armFallback(text);
-    else this._ended(token, false);
+  _onSpeechError(token, gate, event) {
+    if (token !== this._token || this._endToken === token) return;
+    const reason = String(event?.error || "").toLowerCase();
+    // cancel() reports interrupted/canceled. That is our own stop, not a finished line.
+    if (reason === "interrupted" || reason === "canceled" || reason === "cancelled") return;
+    this._dropUtterance();
+    this._acc = 0;
+    this._ended(token, gate);
+  }
+
+  _dropUtterance() {
+    const utter = this._utter;
+    this._utter = null;
+    if (!utter) return;
+    utter.onend = null;
+    utter.onerror = null;
   }
 
   _stopAudio() {
+    this._dropUtterance();
+    if (this.mode === "speech") this._acc = 0;
     try { this.synth?.cancel?.(); } catch { /* ignore */ }
   }
 
@@ -387,8 +463,12 @@ export function createFakeSynth(voices = []) {
     cancel() {
       this.speaking = false;
       this.paused = false;
-      if (this.current) this.current._cancelled = true;
+      const utter = this.current;
       this.current = null;
+      if (!utter || utter._cancelled) return;
+      utter._cancelled = true;
+      // Chrome reports a cancel as an utterance error. Handlers cleared first must not run.
+      try { utter.onerror?.({ error: "canceled" }); } catch { /* ignore */ }
     },
     pause() { this.paused = true; },
     resume() { this.paused = false; },
@@ -405,12 +485,12 @@ export function createFakeSynth(voices = []) {
       this.current = null;
       utter.onend?.();
     },
-    fail() {
+    fail(error = "synthesis-failed") {
       const utter = this.current;
       if (!utter || utter._cancelled) return;
       this.speaking = false;
       this.current = null;
-      utter.onerror?.();
+      utter.onerror?.({ error });
     },
   };
   return synth;
