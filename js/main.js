@@ -3,6 +3,7 @@ import { LANGS, t, applyStaticI18n } from "./i18n.js";
 import { buildKpiFromSession } from "./kpi.js";
 import { THEME_IDS, applyTheme, paletteOf } from "./themes.js";
 import { Session, STEPS } from "./mes.js";
+import { createNarration } from "./narration.js";
 import { Plant } from "./plant.js";
 import { productById } from "./catalog.js";
 import { STATIONS } from "./route.js";
@@ -27,8 +28,18 @@ const state = {
   selectedLotId: null,
 };
 
+const voice = createNarration();
+voice.oncaption = () => {
+  if (state.session) renderAll(state.lang, state.session, els);
+};
+
 const plant = new Plant(canvas);
 plant.setTranslator((k, vars) => t(state.lang, k, vars || {}), state.lang);
+plant.onSolo = (on) => {
+  if (on || !state.session) return;
+  voice.resumeGate();
+  renderAll(state.lang, state.session, els);
+};
 plant.focusOverview();
 
 applyStaticI18n(state.lang);
@@ -241,7 +252,10 @@ function replayStation(stationId) {
     return;
   }
   if (plant.mode === "solo" || plant.mode === "soloHold") plant.cancelSolo();
-  plant.playSolo(stationId || s.step().id);
+  const demoId = stationId || s.step().id;
+  if (!plant.playSolo(demoId)) return;
+  const demo = (s.flow || []).find((step) => step.id === demoId) || STATIONS.find((step) => step.id === demoId);
+  if (demo) voice.speakAside(demo, s.product, state.lang, s.speed);
 }
 
 function paintMorph() {
@@ -280,12 +294,15 @@ function startLot() {
   plant.setOpsFocus(null);
   state.selectedLotId = null;
   plant.setSelectedLot(null);
+  voice.reset();
   const session = new Session({
     intensity: state.intensity,
     role: state.startRole,
     productId: state.productId,
     scenario: state.scenario,
     awaitChoice: true,
+    voice,
+    lang: state.lang,
   });
   document.querySelectorAll("[data-role]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.role === state.startRole));
@@ -303,6 +320,7 @@ function startLot() {
 
 function chooseRun(mode) {
   if (!state.session) return;
+  state.session.armNarration();
   state.session.chooseRun(mode);
   els.runLayer.hidden = true;
   renderAll(state.lang, state.session, els);
@@ -331,6 +349,7 @@ document.getElementById("btn-restart").addEventListener("click", () => {
   els.doneLayer.hidden = true;
   els.runLayer.hidden = true;
   els.startLayer.hidden = false;
+  voice.reset();
   state.session = null;
   state.briefing = false;
   plant.watch(null);
@@ -430,6 +449,16 @@ els.btnAuto.addEventListener("click", () => {
   state.session.setAuto(!state.session.auto);
 });
 els.btnReplay.addEventListener("click", () => replayStation());
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest?.("[data-voice-toggle]");
+  if (!btn) return;
+  const next = !voice.enabled;
+  if (state.session) state.session.setVoice(next);
+  else {
+    voice.setEnabled(next);
+    renderAll(state.lang, state.session, els);
+  }
+});
 
 document.querySelector(".lot-dock").addEventListener("click", (e) => {
   const mode = e.target.closest("[data-mode]");
@@ -463,6 +492,7 @@ document.querySelector(".topbar").addEventListener("click", (e) => {
 els.btnLang.addEventListener("click", () => {
   const i = LANGS.indexOf(state.lang);
   state.lang = LANGS[(i + 1) % LANGS.length];
+  state.session?.setLang(state.lang);
   applyStaticI18n(state.lang);
   plant.setTranslator((k, vars) => t(state.lang, k, vars || {}), state.lang);
   syncThemeUi();

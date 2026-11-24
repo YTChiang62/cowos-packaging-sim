@@ -373,6 +373,21 @@ body.theme-neutral #grain { opacity: 0.035; }
 .stepper .primary-btn { flex: 1; min-width: 120px; padding: 8px 12px; }
 .ghost-btn { background: rgba(255,255,255,0.03); }
 
+.lot-narration,
+.ops-narration {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 7.5em;
+  overflow: auto;
+}
+.ops-narration {
+  margin-top: 8px;
+}
+.ops-narration:empty,
+.lot-narration:empty { display: none; }
+.voice-row { margin-top: 8px; }
+
 .speed-row, .toggle-row {
   display: flex;
   align-items: center;
