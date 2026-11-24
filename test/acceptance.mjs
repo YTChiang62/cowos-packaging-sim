@@ -55,6 +55,7 @@ import {
   requiredNarrationIds,
   selectVoice,
   speechRateFor,
+  speechWatchdogSec,
 } from "../js/narration.js";
 import {
   HUD_PANELS,
@@ -2338,6 +2339,180 @@ check(
   blocked.setVoice(false);
   blocked.tick(0.4);
   check("mute during a hold stays on the held step", blocked.hold && blocked.step().id === heldId && holdSynth.speaking === false);
+
+  const watchProduct = productById("HBX-100");
+  const watchStep = watchProduct.flow[0];
+  const watchNext = watchProduct.flow[1];
+  const zhLine = "測".repeat(80);
+  const shortEn = "word ".repeat(10).trim();
+  const longEn = "word ".repeat(40).trim();
+  check(
+    "speech watchdog estimates chinese by character and english by word",
+    speechWatchdogSec(zhLine, "zh-TW", 1) > speechWatchdogSec(shortEn, "en", 1) &&
+      speechWatchdogSec(longEn, "en", 1) > speechWatchdogSec(shortEn, "en", 1) &&
+      speechWatchdogSec(longEn, "en", 1.15) < speechWatchdogSec(longEn, "en", 0.92) &&
+      speechWatchdogSec("x", "en", 1) >= 8 &&
+      speechWatchdogSec(`${longEn} `.repeat(200), "en", 1) <= 90
+  );
+
+  const stuckSynth = createFakeSynth(femaleVoices);
+  const stuckVoice = createNarration(stuckSynth);
+  stuckVoice.speakStep(watchStep, watchProduct, "en", 1);
+  const stuckBudget = speechWatchdogSec(stuckVoice.lastText, "en", stuckVoice.lastRate);
+  const stuckEnd = stuckVoice._utter?.onend;
+  check(
+    "speech keeps the utterance while the line is speaking",
+    stuckVoice._utter != null &&
+      stuckVoice._utter === stuckSynth.current &&
+      stuckVoice.speaking === true &&
+      stuckVoice._utter.text === stuckVoice.lastText &&
+      stuckVoice._need === stuckBudget
+  );
+  stuckVoice._utter.onerror({ error: "interrupted" });
+  stuckVoice._utter.onerror({ error: "canceled" });
+  check(
+    "our own cancel errors do not release the speech gate",
+    stuckVoice.gateDone === false && stuckVoice.speaking === true && stuckVoice._utter === stuckSynth.current
+  );
+  stuckVoice.tick(stuckBudget - 0.05);
+  check("watchdog has not released the gate early", stuckVoice.doneFor(watchStep.id, "en") === false && stuckVoice._utter != null);
+  stuckVoice.tick(0.2);
+  check(
+    "a synth that never fires onend releases the gate when the watchdog elapses",
+    stuckVoice.doneFor(watchStep.id, "en") === true &&
+      stuckVoice.speaking === false &&
+      stuckVoice._utter == null &&
+      stuckSynth.current == null
+  );
+  const stuckSpeaks = stuckVoice.speakCount;
+  stuckEnd();
+  stuckVoice.tick(stuckBudget);
+  check(
+    "onend arriving after the watchdog does not speak the step again",
+    stuckVoice.speakCount === stuckSpeaks &&
+      stuckVoice.doneFor(watchStep.id, "en") === true &&
+      stuckVoice.gateStepId === watchStep.id
+  );
+
+  const staleSynth = createFakeSynth(femaleVoices);
+  const staleVoice = createNarration(staleSynth);
+  staleVoice.speakStep(watchStep, watchProduct, "zh-CN", 1);
+  staleVoice.tick(staleVoice._need - 0.2);
+  const staleEnd = staleVoice._utter.onend;
+  staleVoice.speakStep(watchNext, watchProduct, "en", 1, { force: true });
+  check(
+    "a new step starts a fresh speech watchdog",
+    staleVoice.gateStepId === watchNext.id &&
+      staleVoice.gateLang === "en" &&
+      staleVoice.gateDone === false &&
+      staleVoice._acc === 0 &&
+      staleVoice._utter != null &&
+      staleVoice._utter === staleSynth.current
+  );
+  staleVoice.tick(0.5);
+  staleEnd();
+  check(
+    "a stale watchdog from the previous step does not release the new line",
+    staleVoice.doneFor(watchNext.id, "en") === false &&
+      staleVoice.gateDone === false &&
+      staleVoice.speaking === true &&
+      staleVoice.gateStepId === watchNext.id
+  );
+
+  const langSynth = createFakeSynth(femaleVoices);
+  const langVoice = createNarration(langSynth);
+  const langRun = new Session({ intensity: "none", voice: langVoice, lang: "en" });
+  langRun.setSpeed(4);
+  langRun.armNarration();
+  langRun.chooseRun("auto");
+  check("watchdog run reaches the speech gate", untilVoiceHold(langRun, langSynth) && langRun.stepIndex === 0);
+  let langGuard = 0;
+  while (langRun._voiceHold && langVoice._acc + 0.05 < langVoice._need && langGuard < 10000) {
+    langRun.tick(0.05);
+    langGuard += 1;
+  }
+  const langEnd = langVoice._utter.onend;
+  const langStep = langVoice.gateStepId;
+  check(
+    "the lot is still on the spoken step just before the watchdog",
+    langGuard < 10000 && langRun.stepIndex === 0 && langRun._voiceHold && langVoice.gateDone === false && langVoice._utter != null
+  );
+  langRun.setLang("zh-TW");
+  const restarted = langVoice._utter;
+  langRun.tick(0.5);
+  langEnd();
+  langRun.tick(0.05);
+  check(
+    "a stale watchdog from the previous language does not advance the lot",
+    langRun.stepIndex === 0 &&
+      langRun._voiceHold &&
+      langVoice.gateLang === "zh-TW" &&
+      langVoice.gateDone === false &&
+      langVoice.gateStepId === langStep &&
+      langVoice.speaking === true &&
+      langVoice._utter === restarted &&
+      langVoice._acc < langVoice._need
+  );
+
+  const dropSynth = createFakeSynth(femaleVoices);
+  const dropVoice = createNarration(dropSynth);
+  const dropRun = new Session({ intensity: "none", voice: dropVoice, lang: "en" });
+  dropRun.setSpeed(4);
+  dropRun.armNarration();
+  dropRun.chooseRun("auto");
+  check("dropped onend still reaches the speech gate", untilVoiceHold(dropRun, dropSynth) && dropRun.stepIndex === 0);
+  let dropGuard = 0;
+  while (dropRun._voiceHold && dropVoice._acc + 0.05 < dropVoice._need && dropGuard < 10000) {
+    dropRun.tick(0.05);
+    dropGuard += 1;
+  }
+  const dropEnd = dropVoice._utter.onend;
+  check("dropped speech is still gating just before the watchdog", dropRun.stepIndex === 0 && dropVoice.gateDone === false);
+  dropRun.tick(0.1);
+  check(
+    "auto-run advances one step when speech never fires onend",
+    dropRun.stepIndex === 1 && dropRun._voiceHold === false && dropVoice.speaking === true && dropVoice._utter != null
+  );
+  dropEnd();
+  dropRun.tick(0.05);
+  check(
+    "onend from the previous step does not advance the run again",
+    dropRun.stepIndex === 1 && dropVoice.gateDone === false && dropVoice.speaking === true
+  );
+
+  const halted = createNarration(createFakeSynth(femaleVoices));
+  halted.speakStep(watchStep, watchProduct, "en", 1);
+  halted.tick(1);
+  halted.halt();
+  halted.tick(speechWatchdogSec(halted.lastText, "en", halted.lastRate) + 5);
+  check(
+    "halt clears the speech watchdog and does not mark the step spoken",
+    halted.gateDone === false && halted.interrupted === true && halted._utter == null && halted.speaking === false
+  );
+
+  const errSynth = createFakeSynth(femaleVoices);
+  const errVoice = createNarration(errSynth);
+  errVoice.speakStep(watchStep, watchProduct, "en", 1);
+  const errEnd = errVoice._utter.onend;
+  const errSpeaks = errVoice.speakCount;
+  errSynth.fail("synthesis-failed");
+  errEnd();
+  check(
+    "a speech error other than cancel releases the gate once",
+    errVoice.doneFor(watchStep.id, "en") === true &&
+      errVoice._utter == null &&
+      errVoice.speakCount === errSpeaks
+  );
+
+  const pausedVoice = createNarration(createFakeSynth(femaleVoices));
+  pausedVoice.speakStep(watchStep, watchProduct, "en", 1);
+  pausedVoice.tick(1);
+  pausedVoice.pause();
+  pausedVoice.tick(pausedVoice._need);
+  check("a paused line does not let the watchdog finish the step", pausedVoice.gateDone === false && pausedVoice.paused === true && pausedVoice._utter != null);
+  pausedVoice.resume();
+  pausedVoice.tick(pausedVoice._need);
+  check("the watchdog resumes after speech continues", pausedVoice.doneFor(watchStep.id, "en") === true);
 
   const page = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   check(
